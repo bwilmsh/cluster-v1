@@ -15,7 +15,7 @@ AI agent platform — Phase 1.
    cp agent/.env.example agent/.env
    ```
 
-2. Install all dependencies:
+2. Install all dependencies (run after service directories are created):
    ```bash
    npm run install:all
    ```
