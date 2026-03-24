@@ -11,23 +11,31 @@ async function getDefaultUser() {
 
 // GET /api/agents
 agentsRouter.get('/', async (_req, res: Response) => {
-  const user = await getDefaultUser()
-  const agents = await prisma.agent.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: 'desc' },
-  })
-  res.json(agents)
+  try {
+    const user = await getDefaultUser()
+    const agents = await prisma.agent.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    })
+    res.json(agents)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // POST /api/agents
 agentsRouter.post('/', async (req: Request, res: Response) => {
-  const { name } = req.body
-  if (!name) return res.status(400).json({ error: 'name is required' })
-  const user = await getDefaultUser()
-  const agent = await prisma.agent.create({
-    data: { name, userId: user.id, status: 'setting_up' },
-  })
-  res.status(201).json(agent)
+  try {
+    const { name } = req.body
+    if (!name) return res.status(400).json({ error: 'name is required' })
+    const user = await getDefaultUser()
+    const agent = await prisma.agent.create({
+      data: { name, userId: user.id, status: 'setting_up' },
+    })
+    res.status(201).json(agent)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // POST /api/agents/generate-questions  — MUST be registered before /:id routes
@@ -51,34 +59,46 @@ agentsRouter.post('/generate-questions', async (req: Request, res: Response) => 
 
 // PATCH /api/agents/:id
 agentsRouter.patch('/:id', async (req: Request, res: Response) => {
-  const id = req.params.id as string
-  const { setupAnswers, memory, status } = req.body
-  const agent = await prisma.agent.update({
-    where: { id },
-    data: {
-      ...(setupAnswers !== undefined && { setupAnswers, status: 'active' }),
-      ...(memory !== undefined && { memory }),
-      ...(status !== undefined && { status }),
-    },
-  })
-  res.json(agent)
+  try {
+    const id = req.params.id as string
+    const { setupAnswers, memory, status } = req.body
+    const agent = await prisma.agent.update({
+      where: { id },
+      data: {
+        ...(setupAnswers !== undefined && { setupAnswers, status: 'active' }),
+        ...(memory !== undefined && { memory }),
+        ...(status !== undefined && { status }),
+      },
+    })
+    res.json(agent)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // DELETE /api/agents/:id
 agentsRouter.delete('/:id', async (req: Request, res: Response) => {
-  const id = req.params.id as string
-  await prisma.agent.delete({ where: { id } })
-  res.status(204).send()
+  try {
+    const id = req.params.id as string
+    await prisma.agent.delete({ where: { id } })
+    res.status(204).send()
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // GET /api/agents/:id/messages
 agentsRouter.get('/:id/messages', async (req: Request, res: Response) => {
-  const id = req.params.id as string
-  const messages = await prisma.message.findMany({
-    where: { agentId: id },
-    orderBy: { createdAt: 'asc' },
-  })
-  res.json(messages)
+  try {
+    const id = req.params.id as string
+    const messages = await prisma.message.findMany({
+      where: { agentId: id },
+      orderBy: { createdAt: 'asc' },
+    })
+    res.json(messages)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // POST /api/agents/:id/chat  — SSE streaming

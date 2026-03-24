@@ -71,3 +71,13 @@ describe('POST /api/agents/generate-questions', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('POST /api/agents/:id/chat', () => {
+  it('returns 404 when agent not found', async () => {
+    // Override agent mock to return null for this test
+    const { prisma } = require('../src/db')
+    prisma.agent.findUnique.mockResolvedValueOnce(null)
+    const res = await request(app).post('/api/agents/nonexistent/chat').send({ message: 'hello' })
+    expect(res.status).toBe(404)
+  })
+})
