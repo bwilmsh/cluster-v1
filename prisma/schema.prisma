@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id         String    @id @default(cuid())
+  email      String    @unique
+  name       String
+  createdAt  DateTime  @default(now())
+  agents     Agent[]
+  groupChats GroupChat[]
+  messages   Message[]
+}
+
+model Agent {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  name           String
+  setupAnswers   Json?
+  memory         String?
+  status         String    @default("active")
+  createdAt      DateTime  @default(now())
+  messages       Message[]
+  groupMembers   GroupChatMember[]
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  role      String
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model GroupChat {
+  id        String            @id @default(cuid())
+  name      String
+  userId    String
+  user      User              @relation(fields: [userId], references: [id])
+  createdAt DateTime          @default(now())
+  members   GroupChatMember[]
+  messages  GroupChatMessage[]
+}
+
+model GroupChatMember {
+  id          String    @id @default(cuid())
+  groupChatId String
+  groupChat   GroupChat @relation(fields: [groupChatId], references: [id], onDelete: Cascade)
+  agentId     String?
+  agent       Agent?    @relation(fields: [agentId], references: [id])
+  userId      String?
+  type        String
+}
+
+model GroupChatMessage {
+  id          String    @id @default(cuid())
+  groupChatId String
+  groupChat   GroupChat @relation(fields: [groupChatId], references: [id], onDelete: Cascade)
+  senderName  String
+  senderRole  String
+  role        String
+  content     String
+  createdAt   DateTime  @default(now())
+}

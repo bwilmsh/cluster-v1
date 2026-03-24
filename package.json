@@ -6,6 +6,11 @@
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && cd agent && pip install -r requirements.txt"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "dotenv": "^17.3.1",
+    "prisma": "^7.5.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.5.0"
   }
 }
