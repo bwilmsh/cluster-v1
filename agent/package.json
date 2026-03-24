@@ -1,0 +1,6 @@
+{
+  "name": "cluster-agent",
+  "scripts": {
+    "dev": "python main.py"
+  }
+}
