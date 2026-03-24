@@ -34,7 +34,7 @@ model Message {
   agentId   String
   agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   role      String
   content   String
   createdAt DateTime @default(now())
@@ -44,7 +44,7 @@ model GroupChat {
   id        String            @id @default(cuid())
   name      String
   userId    String
-  user      User              @relation(fields: [userId], references: [id])
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime          @default(now())
   members   GroupChatMember[]
   messages  GroupChatMessage[]
