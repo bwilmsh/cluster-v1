@@ -8,3 +8,4 @@ dist/
 .next/
 
 /generated/prisma
+prisma/seed.js
