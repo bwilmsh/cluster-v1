@@ -13,3 +13,4 @@ dist-electron/
 .next/ 
 .claude/ 
 package-lock.json 
+dist-electron/ 
