@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"npm run dev --prefix agent\" \"npm run dev --prefix frontend\"",
     "start": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"npm run start --prefix frontend\"",
+    "postinstall": "cd backend && npx prisma generate",
     "build": "npm run build --prefix frontend",
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix electron && cd agent && pip install -r requirements.txt",
     "electron:dev": "npm run dev & sleep 8 && npm run dev --prefix electron",
