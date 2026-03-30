@@ -5,7 +5,7 @@
     "dev": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"npm run dev --prefix frontend\"",
     "build": "cd frontend && npm run build",
     "start": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"node backend/dist/index.js\" \"python3 agent/main.py\" \"npm run start --prefix frontend\"",
-    "postinstall": "cd backend && npx prisma generate && npm run build --prefix backend && cd ../frontend && npm run build",
+    "postinstall": "cd backend && npx prisma generate --schema ../prisma/schema.prisma && npm run build --prefix backend && cd ../frontend && npm run build",
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix electron && cd agent && pip install -r requirements.txt",
     "electron:dev": "npm run dev & sleep 8 && npm run dev --prefix electron",
     "electron:build": "npm run build --prefix electron",
