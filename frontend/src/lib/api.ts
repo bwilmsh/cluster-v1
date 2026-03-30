@@ -21,6 +21,7 @@ export interface GroupChat {
   name: string
   createdAt: string
   members: GroupChatMember[]
+  messages?: Array<{ content: string; senderName: string; createdAt: string }>
 }
 
 export interface GroupChatMember {
@@ -28,7 +29,7 @@ export interface GroupChatMember {
   agentId: string | null
   userId: string | null
   type: 'human' | 'agent'
-  agent?: Agent
+  agent?: Agent | null
 }
 
 export interface GroupChatMessage {
@@ -37,6 +38,28 @@ export interface GroupChatMessage {
   senderRole: string
   role: string
   content: string
+  createdAt: string
+}
+
+export interface AgentFile {
+  id: string
+  fileName: string
+  fileType: string
+  createdAt: string
+}
+
+export type WidgetSize = 'sm' | 'md' | 'lg'
+export type WidgetType = 'stat' | 'agents_grid' | 'activity_feed' | 'agent_memory' | 'text'
+
+export interface Widget {
+  id: string
+  title: string
+  type: WidgetType
+  size: WidgetSize
+  config: Record<string, any>
+  data: any
+  order: number
+  lastUpdated: string | null
   createdAt: string
 }
 
@@ -65,12 +88,53 @@ export const api = {
     messages: (id: string): Promise<Message[]> =>
       fetch(`${BASE}/agents/${id}/messages`).then((r) => r.json()),
 
+    files: (id: string): Promise<AgentFile[]> =>
+      fetch(`${BASE}/agents/${id}/files`).then((r) => r.json()),
+
+    uploadFile: (id: string, file: File): Promise<AgentFile> => {
+      const form = new FormData()
+      form.append('file', file)
+      return fetch(`${BASE}/agents/${id}/files`, { method: 'POST', body: form }).then((r) => r.json())
+    },
+
+    deleteFile: (agentId: string, fileId: string): Promise<void> =>
+      fetch(`${BASE}/agents/${agentId}/files/${fileId}`, { method: 'DELETE' }).then(() => undefined),
+
     generateQuestions: (agentName: string) =>
       fetch(`${BASE}/agents/generate-questions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentName }),
       }).then((r) => r.json()),
+  },
+
+  widgets: {
+    list: (): Promise<Widget[]> =>
+      fetch(`${BASE}/widgets`).then((r) => r.json()),
+
+    create: (data: { title: string; type: WidgetType; size?: WidgetSize; config?: Record<string, any> }): Promise<Widget> =>
+      fetch(`${BASE}/widgets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    reorder: (order: { id: string; order: number }[]): Promise<void> =>
+      fetch(`${BASE}/widgets/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      }).then(() => undefined),
+
+    update: (id: string, data: Partial<Pick<Widget, 'title' | 'size' | 'order'>>): Promise<Widget> =>
+      fetch(`${BASE}/widgets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/widgets/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
 
   groupChats: {
@@ -93,5 +157,11 @@ export const api = {
 
     messages: (id: string): Promise<GroupChatMessage[]> =>
       fetch(`${BASE}/groupchats/${id}/messages`).then((r) => r.json()),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/groupchats/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+    removeMember: (chatId: string, memberId: string): Promise<void> =>
+      fetch(`${BASE}/groupchats/${chatId}/members/${memberId}`, { method: 'DELETE' }).then(() => undefined),
   },
 }

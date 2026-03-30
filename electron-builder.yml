@@ -1,0 +1,66 @@
+appId: com.cluster.desktop
+productName: Cluster
+copyright: "Copyright 2025 Cluster"
+
+directories:
+  output: dist-electron
+
+files:
+  - "electron/dist/**/*"
+  - "electron/node_modules/**/*"
+  - "electron/package.json"
+
+extraResources:
+  # Bundle the backend
+  - from: "backend/dist"
+    to: "backend/dist"
+    filter: ["**/*"]
+  # Bundle the Next.js standalone output
+  - from: "frontend/.next/standalone"
+    to: "frontend/standalone"
+    filter: ["**/*"]
+  - from: "frontend/.next/static"
+    to: "frontend/standalone/.next/static"
+    filter: ["**/*"]
+  - from: "frontend/public"
+    to: "frontend/standalone/public"
+    filter: ["**/*"]
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cluster
+
+# macOS
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  title: "Cluster ${version}"
+  sign: false
+
+# Auto-updater (GitHub Releases)
+publish:
+  provider: github
+  private: false
+
+# Skip rebuilding native modules (robotjs is optional, requires VS Build Tools)
+electronRebuild:
+  onlyModules: []
+
+# Security: disable asar for easier resource access in dev
+asar: true

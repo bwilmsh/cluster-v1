@@ -4,29 +4,87 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id         String    @id @default(cuid())
-  email      String    @unique
-  name       String
-  createdAt  DateTime  @default(now())
-  agents     Agent[]
-  groupChats GroupChat[]
-  messages   Message[]
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String
+  createdAt     DateTime       @default(now())
+  agents        Agent[]
+  groupChats    GroupChat[]
+  messages      Message[]
+  integrations  Integration[]
+  oauthConfigs  OAuthConfig[]
+  widgets       Widget[]
+}
+
+model OAuthConfig {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String   // "google" | "slack" | "notion"
+  clientId     String   // encrypted
+  clientSecret String   // encrypted
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, provider])
+}
+
+model Integration {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String    // "google" | "slack" | "notion"
+  accessToken  String    // AES-256-GCM encrypted
+  refreshToken String?   // AES-256-GCM encrypted
+  accountEmail String?
+  accountName  String?
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, provider])
+}
+
+model Widget {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  type        String    // "stat" | "agents_grid" | "activity_feed" | "agent_memory" | "text"
+  config      Json      @default("{}")
+  size        String    @default("md") // "sm" | "md" | "lg"
+  order       Int       @default(0)
+  lastData    Json?
+  lastUpdated DateTime?
+  createdAt   DateTime  @default(now())
 }
 
 model Agent {
-  id             String    @id @default(cuid())
+  id             String      @id @default(cuid())
   userId         String
-  user           User      @relation(fields: [userId], references: [id])
+  user           User        @relation(fields: [userId], references: [id])
   name           String
   setupAnswers   Json?
   memory         String?
-  status         String    @default("active")
-  createdAt      DateTime  @default(now())
+  status         String      @default("active")
+  createdAt      DateTime    @default(now())
   messages       Message[]
   groupMembers   GroupChatMember[]
+  files          AgentFile[]
+}
+
+model AgentFile {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  fileName  String
+  fileType  String   // "csv" | "sheet"
+  content   String
+  createdAt DateTime @default(now())
 }
 
 model Message {

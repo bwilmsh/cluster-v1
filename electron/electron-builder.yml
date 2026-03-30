@@ -1,0 +1,43 @@
+appId: com.cluster.desktop
+productName: Cluster
+copyright: "Copyright 2025 Cluster"
+
+directories:
+  output: ../dist-electron
+
+files:
+  - "dist/**/*"
+  - "node_modules/**/*"
+  - "package.json"
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cluster
+
+# macOS
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  title: "Cluster ${version}"
+  sign: false
+
+# Auto-updater: uncomment and set repo when ready to publish releases
+# publish:
+#   provider: github
+#   private: false

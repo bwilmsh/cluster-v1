@@ -9,16 +9,40 @@ async function getDefaultUser() {
   return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
 }
 
+function getPythonUrl() {
+  return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+}
+
 // GET /api/groupchats
 groupChatsRouter.get('/', async (_req, res: Response) => {
   try {
     const user = await getDefaultUser()
     const chats = await prisma.groupChat.findMany({
       where: { userId: user.id },
-      include: { members: { include: { agent: true } } },
+      include: {
+        members: { include: { agent: true } },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { content: true, senderName: true, createdAt: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     })
     res.json(chats)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// DELETE /api/groupchats/:id
+groupChatsRouter.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string
+    await prisma.groupChatMessage.deleteMany({ where: { groupChatId: id } })
+    await prisma.groupChatMember.deleteMany({ where: { groupChatId: id } })
+    await prisma.groupChat.delete({ where: { id } })
+    res.status(204).send()
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' })
   }
@@ -42,9 +66,23 @@ groupChatsRouter.post('/', async (req: Request, res: Response) => {
           })),
         },
       },
-      include: { members: true },
+      include: { members: { include: { agent: true } } },
     })
     res.status(201).json(chat)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/groupchats/:id
+groupChatsRouter.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const chat = await prisma.groupChat.findUnique({
+      where: { id: req.params.id as string },
+      include: { members: { include: { agent: true } } },
+    })
+    if (!chat) return res.status(404).json({ error: 'Not found' })
+    res.json(chat)
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' })
   }
@@ -57,8 +95,19 @@ groupChatsRouter.post('/:id/members', async (req: Request, res: Response) => {
     const { agentId, userId, type } = req.body
     const member = await prisma.groupChatMember.create({
       data: { groupChatId: id, agentId, userId, type },
+      include: { agent: true },
     })
     res.status(201).json(member)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// DELETE /api/groupchats/:id/members/:memberId
+groupChatsRouter.delete('/:id/members/:memberId', async (req: Request, res: Response) => {
+  try {
+    await prisma.groupChatMember.delete({ where: { id: req.params.memberId as string } })
+    res.status(204).send()
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' })
   }
@@ -78,7 +127,18 @@ groupChatsRouter.get('/:id/messages', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/groupchats/:id/message  — SSE streaming, each agent responds in turn
+function detectHandoff(response: string, agentNames: string[]): string | null {
+  const matches = response.match(/@(\w+)/g)
+  if (!matches) return null
+  for (const mention of matches) {
+    const name = mention.slice(1)
+    const found = agentNames.find((n) => n.toLowerCase() === name.toLowerCase())
+    if (found) return found
+  }
+  return null
+}
+
+// POST /api/groupchats/:id/message  — SSE streaming, waterfall agent responses
 groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   const id = req.params.id as string
   const { message, senderName = 'You' } = req.body
@@ -98,16 +158,60 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   // Save user message
   try {
     await prisma.groupChatMessage.create({
-      data: {
-        groupChatId: id,
-        senderName,
-        senderRole: 'user',
-        role: 'user',
-        content: message,
-      },
+      data: { groupChatId: id, senderName, senderRole: 'user', role: 'user', content: message },
     })
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' })
+  }
+
+  // Fetch recent history (includes the user message we just saved)
+  const recentHistory = await prisma.groupChatMessage.findMany({
+    where: { groupChatId: id },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+    select: { senderName: true, content: true, role: true },
+  })
+
+  const agentMembers = chat.members.filter((m: any) => m.type === 'agent' && m.agent)
+
+  if (agentMembers.length === 0) {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.write('data: [DONE]\n\n')
+    res.end()
+    return
+  }
+
+  // Build member list with roles for context
+  const membersList = [
+    ...agentMembers.map((m: any) => ({
+      name: m.agent.name,
+      type: 'agent',
+      role: (m.agent.setupAnswers as any)?.['Business type / role'] ?? null,
+    })),
+    { name: senderName, type: 'human' },
+  ]
+
+  const allAgentNames = agentMembers.map((m: any) => m.agent.name as string)
+
+  // Relevance check picks the starting agent
+  let startingAgentName: string = agentMembers[0].agent.name
+  try {
+    const relevanceRes = await fetch(`${getPythonUrl()}/group-relevance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        sender_name: senderName,
+        agents: agentMembers.map((m: any) => ({ name: m.agent.name })),
+        max_responders: 1,
+      }),
+    })
+    const relevanceData = await relevanceRes.json()
+    startingAgentName = relevanceData.responders?.[0] ?? startingAgentName
+  } catch {
+    // keep fallback
   }
 
   // Set up SSE
@@ -115,23 +219,25 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
 
-  let existingMessages: Array<{ role: string; content: string; senderName: string }>
-  try {
-    existingMessages = await prisma.groupChatMessage.findMany({
-      where: { groupChatId: id },
-      orderBy: { createdAt: 'asc' },
-      select: { role: true, content: true, senderName: true },
-    })
-  } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: 'Failed to load history' })}\n\n`)
-    res.end()
-    return
-  }
+  // History excluding the user message (slice off last entry = user msg we just saved)
+  const historyForAgents = recentHistory.slice(0, -1).map((m) => ({
+    sender_name: m.senderName,
+    content: m.content,
+    role: m.role,
+  }))
 
-  const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
-  const agentMembers = chat.members.filter((m: any) => m.type === 'agent' && m.agent)
+  // Waterfall state
+  const MAX_TURNS = 5
+  let currentAgentName = startingAgentName
+  let currentMessage = message
+  let currentSenderName = senderName
+  // Accumulated context grows as agents respond
+  const inTurnHistory = [...historyForAgents]
 
-  for (const member of agentMembers) {
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const member = agentMembers.find((m: any) => m.agent.name === currentAgentName)
+    if (!member) break
+
     const agent = member.agent
     res.write(
       `data: ${JSON.stringify({ type: 'agent_start', agentName: agent.name, agentId: agent.id })}\n\n`
@@ -140,15 +246,18 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     let agentResponse = ''
 
     try {
-      const pythonRes = await fetch(`${pythonUrl}/chat`, {
+      const pythonRes = await fetch(`${getPythonUrl()}/group-chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agent_name: agent.name,
           setup_answers: agent.setupAnswers ?? {},
           memory: agent.memory ?? '',
-          history: existingMessages.map((m) => ({ role: m.role, content: m.content })),
-          message: `[Group chat context] ${senderName} said: ${message}`,
+          members: membersList,
+          sender_name: currentSenderName,
+          history: inTurnHistory,
+          message: currentMessage,
+          chat_name: chat.name,
         }),
       })
 
@@ -170,7 +279,9 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
                 res.write(
                   `data: ${JSON.stringify({ ...parsed, agentName: agent.name, agentId: agent.id })}\n\n`
                 )
-              } catch { /* skip malformed */ }
+              } catch {
+                // skip malformed
+              }
             }
           }
         }
@@ -180,22 +291,34 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     }
 
     if (agentResponse) {
-      try {
-        await prisma.groupChatMessage.create({
-          data: {
-            groupChatId: id,
-            senderName: agent.name,
-            senderRole: 'agent',
-            role: 'assistant',
-            content: agentResponse,
-          },
-        })
-      } catch { /* non-fatal */ }
+      await prisma.groupChatMessage.create({
+        data: {
+          groupChatId: id,
+          senderName: agent.name,
+          senderRole: 'agent',
+          role: 'assistant',
+          content: agentResponse,
+        },
+      })
+      inTurnHistory.push({ sender_name: agent.name, content: agentResponse, role: 'assistant' })
     }
 
     res.write(
       `data: ${JSON.stringify({ type: 'agent_done', agentName: agent.name, agentId: agent.id })}\n\n`
     )
+
+    // Detect @mention handoff to next agent
+    const nextAgent = detectHandoff(agentResponse, allAgentNames.filter((n) => n !== agent.name))
+    if (nextAgent) {
+      res.write(
+        `data: ${JSON.stringify({ type: 'agent_handoff', from: agent.name, to: nextAgent })}\n\n`
+      )
+      currentAgentName = nextAgent
+      currentMessage = agentResponse
+      currentSenderName = agent.name
+    } else {
+      break
+    }
   }
 
   res.write('data: [DONE]\n\n')

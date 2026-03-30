@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { prisma } from '../db'
+import { getUserIntegrationTokens } from './integrations'
+import { filesRouter } from './files'
 
 export const agentsRouter = Router()
 
@@ -8,6 +10,13 @@ const DEFAULT_USER_EMAIL = 'user@cluster.local'
 async function getDefaultUser() {
   return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
 }
+
+function getPythonUrl() {
+  return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+}
+
+// Mount file routes under /api/agents/:id/files
+agentsRouter.use('/:id/files', filesRouter)
 
 // GET /api/agents
 agentsRouter.get('/', async (_req, res: Response) => {
@@ -43,9 +52,8 @@ agentsRouter.post('/generate-questions', async (req: Request, res: Response) => 
   const { agentName } = req.body
   if (!agentName) return res.status(400).json({ error: 'agentName is required' })
 
-  const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
   try {
-    const response = await fetch(`${pythonUrl}/generate-questions`, {
+    const response = await fetch(`${getPythonUrl()}/generate-questions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent_name: agentName }),
@@ -71,6 +79,22 @@ agentsRouter.patch('/:id', async (req: Request, res: Response) => {
       },
     })
     res.json(agent)
+
+    // After saving setup answers, generate initial memory in background
+    if (setupAnswers !== undefined) {
+      fetch(`${getPythonUrl()}/initialize-memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_name: agent.name, setup_answers: setupAnswers }),
+      })
+        .then((r) => r.json())
+        .then(({ memory: initialMemory }) => {
+          if (initialMemory) {
+            return prisma.agent.update({ where: { id }, data: { memory: initialMemory } })
+          }
+        })
+        .catch(() => {})
+    }
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' })
   }
@@ -116,23 +140,29 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
     data: { agentId: id, userId: user.id, role: 'user', content: message },
   })
 
-  // Fetch conversation history
-  const history = await prisma.message.findMany({
-    where: { agentId: id },
-    orderBy: { createdAt: 'asc' },
-    select: { role: true, content: true },
-  })
+  // Fetch history + agent files + user integrations in parallel
+  const [history, agentFiles, integrationTokens] = await Promise.all([
+    prisma.message.findMany({
+      where: { agentId: id },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, content: true },
+    }),
+    prisma.agentFile.findMany({
+      where: { agentId: id },
+      select: { fileName: true, content: true },
+    }),
+    getUserIntegrationTokens(user.id),
+  ])
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
 
-  const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
   let fullContent = ''
 
   try {
-    const pythonRes = await fetch(`${pythonUrl}/chat`, {
+    const pythonRes = await fetch(`${getPythonUrl()}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -141,6 +171,8 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
         memory: agent.memory ?? '',
         history: history.slice(0, -1),
         message,
+        integrations: integrationTokens,
+        files: agentFiles.map((f) => ({ name: f.fileName, content: f.content })),
       }),
     })
 
@@ -177,6 +209,25 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
       await prisma.message.create({
         data: { agentId: id, userId: user.id, role: 'assistant', content: fullContent },
       })
+
+      // Fire-and-forget memory update
+      const recentTurn = `user: ${message}\nassistant: ${fullContent}`
+      fetch(`${getPythonUrl()}/update-memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_name: agent.name,
+          current_memory: agent.memory ?? '',
+          conversation: recentTurn,
+        }),
+      })
+        .then((r) => r.json())
+        .then(({ memory: updatedMemory }) => {
+          if (updatedMemory) {
+            return prisma.agent.update({ where: { id }, data: { memory: updatedMemory } })
+          }
+        })
+        .catch(() => {})
     }
     res.end()
   }

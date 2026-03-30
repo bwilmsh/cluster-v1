@@ -34,7 +34,7 @@ export default function NewGroupChatPage() {
   }
 
   return (
-    <div className="min-h-screen p-8 max-w-6xl mx-auto">
+    <div className="h-full overflow-y-auto p-8 max-w-6xl mx-auto">
       <div className="mb-8">
         <Link href="/groupchats" className="text-white/40 hover:text-white/70 text-sm transition-colors">
           ← Group Chats

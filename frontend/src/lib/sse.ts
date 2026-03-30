@@ -11,6 +11,8 @@ export async function* readSSE(
   agentName?: string
   agentId?: string
   error?: string
+  from?: string
+  to?: string
 }> {
   const res = await fetch(url, {
     method: 'POST',
