@@ -9,3 +9,5 @@ dist/
 
 /generated/prisma
 prisma/seed.js
+dist-electron/ 
+.next/ 
