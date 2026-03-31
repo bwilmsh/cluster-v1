@@ -2,7 +2,7 @@
   "name": "cluster",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"npm run dev --prefix frontend\"",
+    "dev": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"cd frontend && npm install && npm run dev\"",
     "build": "cd frontend && npm run build",
     "start": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"node backend/dist/index.js\" \"python3 agent/main.py\" \"npm run start --prefix frontend\"",
     "postinstall": "cd backend && npx prisma generate --schema ../prisma/schema.prisma",
