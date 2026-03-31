@@ -8,7 +8,11 @@ export const agentsRouter = Router()
 const DEFAULT_USER_EMAIL = 'user@cluster.local'
 
 async function getDefaultUser() {
-  return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
+  return prisma.user.upsert({
+    where: { email: DEFAULT_USER_EMAIL },
+    update: {},
+    create: { email: DEFAULT_USER_EMAIL, name: 'Default User' },
+  })
 }
 
 function getPythonUrl() {

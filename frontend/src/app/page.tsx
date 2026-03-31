@@ -70,7 +70,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     Promise.all([api.agents.list(), api.widgets.list()])
-      .then(([a, w]) => { setAgents(a); setWidgets(w) })
+      .then(([a, w]) => {
+        const agentList = Array.isArray(a) ? a : (a as { agents?: Agent[]; data?: Agent[] })?.agents ?? (a as { agents?: Agent[]; data?: Agent[] })?.data ?? []
+        const widgetList = Array.isArray(w) ? w : (w as { widgets?: Widget[]; data?: Widget[] })?.widgets ?? (w as { widgets?: Widget[]; data?: Widget[] })?.data ?? []
+        setAgents(agentList)
+        setWidgets(widgetList)
+      })
       .finally(() => setLoading(false))
   }, [])
 
