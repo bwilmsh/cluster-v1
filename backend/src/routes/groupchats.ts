@@ -1,13 +1,7 @@
 import { Router, Request, Response } from 'express'
-import { prisma } from '../db'
+import { prisma, getDefaultUser } from '../db'
 
 export const groupChatsRouter = Router()
-
-const DEFAULT_USER_EMAIL = 'user@cluster.local'
-
-async function getDefaultUser() {
-  return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
-}
 
 function getPythonUrl() {
   return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'

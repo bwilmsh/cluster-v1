@@ -1,13 +1,7 @@
 import { Router, Request, Response } from 'express'
-import { prisma } from '../db'
+import { prisma, getDefaultUser } from '../db'
 
 export const widgetsRouter = Router()
-
-const DEFAULT_USER_EMAIL = 'user@cluster.local'
-
-async function getDefaultUser() {
-  return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
-}
 
 async function computeWidgetData(widget: any, userId: string): Promise<any> {
   const config = (widget.config as Record<string, any>) ?? {}

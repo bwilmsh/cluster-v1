@@ -1,15 +1,9 @@
 import { Router, Request, Response } from 'express'
-import { prisma } from '../db'
+import { prisma, getDefaultUser } from '../db'
 import { browseWebsite } from '../services/browser'
 import { decrypt } from '../lib/crypto'
 
 export const browseRouter = Router()
-
-const DEFAULT_USER_EMAIL = 'user@cluster.local'
-
-async function getDefaultUser() {
-  return prisma.user.findUniqueOrThrow({ where: { email: DEFAULT_USER_EMAIL } })
-}
 
 function extractDomain(url: string): string {
   try {

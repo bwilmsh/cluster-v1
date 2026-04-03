@@ -1,5 +1,17 @@
 const BASE = '/api'
 
+/** Guard: if the server returns a wrapped object instead of an array, unwrap it. */
+export function safeArray<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[]
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>
+    for (const key of ['data', 'items', 'results', 'tasks', 'agents', 'widgets', 'messages', 'credentials', 'chats', 'members', 'activities']) {
+      if (Array.isArray(d[key])) return d[key] as T[]
+    }
+  }
+  return []
+}
+
 export interface Agent {
   id: string
   name: string
@@ -66,7 +78,7 @@ export interface Widget {
 export const api = {
   agents: {
     list: (): Promise<Agent[]> =>
-      fetch(`${BASE}/agents`).then((r) => r.json()),
+      fetch(`${BASE}/agents`).then((r) => r.json()).then((d) => safeArray<Agent>(d)),
 
     create: (name: string): Promise<Agent> =>
       fetch(`${BASE}/agents`, {
@@ -86,10 +98,10 @@ export const api = {
       fetch(`${BASE}/agents/${id}`, { method: 'DELETE' }).then(() => undefined),
 
     messages: (id: string): Promise<Message[]> =>
-      fetch(`${BASE}/agents/${id}/messages`).then((r) => r.json()),
+      fetch(`${BASE}/agents/${id}/messages`).then((r) => r.json()).then((d) => safeArray<Message>(d)),
 
     files: (id: string): Promise<AgentFile[]> =>
-      fetch(`${BASE}/agents/${id}/files`).then((r) => r.json()),
+      fetch(`${BASE}/agents/${id}/files`).then((r) => r.json()).then((d) => safeArray<AgentFile>(d)),
 
     uploadFile: (id: string, file: File): Promise<AgentFile> => {
       const form = new FormData()
@@ -110,7 +122,7 @@ export const api = {
 
   widgets: {
     list: (): Promise<Widget[]> =>
-      fetch(`${BASE}/widgets`).then((r) => r.json()),
+      fetch(`${BASE}/widgets`).then((r) => r.json()).then((d) => safeArray<Widget>(d)),
 
     create: (data: { title: string; type: WidgetType; size?: WidgetSize; config?: Record<string, any> }): Promise<Widget> =>
       fetch(`${BASE}/widgets`, {
@@ -139,7 +151,7 @@ export const api = {
 
   groupChats: {
     list: (): Promise<GroupChat[]> =>
-      fetch(`${BASE}/groupchats`).then((r) => r.json()),
+      fetch(`${BASE}/groupchats`).then((r) => r.json()).then((d) => safeArray<GroupChat>(d)),
 
     create: (name: string, agentIds: string[]): Promise<GroupChat> =>
       fetch(`${BASE}/groupchats`, {
@@ -156,7 +168,7 @@ export const api = {
       }).then((r) => r.json()),
 
     messages: (id: string): Promise<GroupChatMessage[]> =>
-      fetch(`${BASE}/groupchats/${id}/messages`).then((r) => r.json()),
+      fetch(`${BASE}/groupchats/${id}/messages`).then((r) => r.json()).then((d) => safeArray<GroupChatMessage>(d)),
 
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/groupchats/${id}`, { method: 'DELETE' }).then(() => undefined),
@@ -167,7 +179,7 @@ export const api = {
 
   credentials: {
     list: (): Promise<WebCredential[]> =>
-      fetch(`${BASE}/credentials`).then((r) => r.json()),
+      fetch(`${BASE}/credentials`).then((r) => r.json()).then((d) => safeArray<WebCredential>(d)),
 
     create: (data: { siteName: string; siteUrl: string; username: string; password: string }): Promise<WebCredential> =>
       fetch(`${BASE}/credentials`, {
@@ -182,7 +194,7 @@ export const api = {
 
   scheduler: {
     list: (): Promise<ScheduledTask[]> =>
-      fetch(`${BASE}/scheduler`).then((r) => r.json()),
+      fetch(`${BASE}/scheduler`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
 
     create: (data: { agentId: string; name: string; prompt: string; cronExpr: string }): Promise<ScheduledTask> =>
       fetch(`${BASE}/scheduler`, {
@@ -207,7 +219,7 @@ export const api = {
 
   browse: {
     activity: (): Promise<BrowseActivity[]> =>
-      fetch(`${BASE}/browse/activity`).then((r) => r.json()),
+      fetch(`${BASE}/browse/activity`).then((r) => r.json()).then((d) => safeArray<BrowseActivity>(d)),
   },
 }
 
