@@ -164,4 +164,80 @@ export const api = {
     removeMember: (chatId: string, memberId: string): Promise<void> =>
       fetch(`${BASE}/groupchats/${chatId}/members/${memberId}`, { method: 'DELETE' }).then(() => undefined),
   },
+
+  credentials: {
+    list: (): Promise<WebCredential[]> =>
+      fetch(`${BASE}/credentials`).then((r) => r.json()),
+
+    create: (data: { siteName: string; siteUrl: string; username: string; password: string }): Promise<WebCredential> =>
+      fetch(`${BASE}/credentials`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/credentials/${id}`, { method: 'DELETE' }).then(() => undefined),
+  },
+
+  scheduler: {
+    list: (): Promise<ScheduledTask[]> =>
+      fetch(`${BASE}/scheduler`).then((r) => r.json()),
+
+    create: (data: { agentId: string; name: string; prompt: string; cronExpr: string }): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    update: (id: string, data: Partial<{ enabled: boolean; cronExpr: string; prompt: string; name: string }>): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    runNow: (id: string): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/scheduler/${id}`, { method: 'DELETE' }).then(() => undefined),
+  },
+
+  browse: {
+    activity: (): Promise<BrowseActivity[]> =>
+      fetch(`${BASE}/browse/activity`).then((r) => r.json()),
+  },
+}
+
+export interface WebCredential {
+  id: string
+  siteName: string
+  siteUrl: string
+  username: string
+  createdAt: string
+}
+
+export interface ScheduledTask {
+  id: string
+  agentId: string
+  agent: { id: string; name: string }
+  name: string
+  prompt: string
+  cronExpr: string
+  enabled: boolean
+  lastRun: string | null
+  nextRun: string | null
+  lastResult: string | null
+  createdAt: string
+}
+
+export interface BrowseActivity {
+  id: string
+  agentName: string | null
+  url: string
+  domain: string
+  summary: string | null
+  createdAt: string
 }

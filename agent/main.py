@@ -46,6 +46,7 @@ class HistoryMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     agent_name: str
+    agent_id: str = ""
     setup_answers: dict[str, Any] = {}
     memory: str = ""
     history: list[HistoryMessage] = []
@@ -149,6 +150,7 @@ def run_tool_use_loop(
 
 async def stream_chat(
     agent_name: str,
+    agent_id: str,
     setup_answers: dict[str, Any],
     memory: str,
     history: list[HistoryMessage],
@@ -158,7 +160,9 @@ async def stream_chat(
 ) -> AsyncIterator[str]:
     client = get_client()
     system_prompt = build_system_prompt(agent_name, setup_answers, memory, files or [])
-    tools = get_available_tools(integrations)
+    # Inject agent identity into integrations so browse_website can log activity
+    enriched_integrations = {**integrations, "agent_id": agent_id, "agent_name": agent_name}
+    tools = get_available_tools(enriched_integrations)
 
     recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
     messages: list[dict] = [{"role": m.role, "content": m.content} for m in recent_history]
@@ -166,12 +170,12 @@ async def stream_chat(
 
     # Handle tool use loop (non-streaming) if tools are available
     if tools:
-        messages = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
+        messages = run_tool_use_loop(client, system_prompt, messages, tools, enriched_integrations)
 
     # Stream final response
     with client.messages.stream(
         model=MODEL,
-        max_tokens=1024,
+        max_tokens=2048,
         system=system_prompt,
         messages=messages,
     ) as stream:
@@ -226,6 +230,7 @@ async def chat(req: ChatRequest):
     return StreamingResponse(
         stream_chat(
             req.agent_name,
+            req.agent_id,
             req.setup_answers,
             req.memory,
             req.history,

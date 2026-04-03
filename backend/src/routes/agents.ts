@@ -171,6 +171,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         agent_name: agent.name,
+        agent_id: agent.id,
         setup_answers: agent.setupAnswers ?? {},
         memory: agent.memory ?? '',
         history: history.slice(0, -1),

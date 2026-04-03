@@ -8,16 +8,19 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  email         String         @unique
-  name          String
-  createdAt     DateTime       @default(now())
-  agents        Agent[]
-  groupChats    GroupChat[]
-  messages      Message[]
-  integrations  Integration[]
-  oauthConfigs  OAuthConfig[]
-  widgets       Widget[]
+  id              String           @id @default(cuid())
+  email           String           @unique
+  name            String
+  createdAt       DateTime         @default(now())
+  agents          Agent[]
+  groupChats      GroupChat[]
+  messages        Message[]
+  integrations    Integration[]
+  oauthConfigs    OAuthConfig[]
+  widgets         Widget[]
+  webCredentials  WebCredential[]
+  scheduledTasks  ScheduledTask[]
+  browseActivities BrowseActivity[]
 }
 
 model OAuthConfig {
@@ -64,17 +67,57 @@ model Widget {
 }
 
 model Agent {
-  id             String      @id @default(cuid())
+  id             String          @id @default(cuid())
   userId         String
-  user           User        @relation(fields: [userId], references: [id])
+  user           User            @relation(fields: [userId], references: [id])
   name           String
   setupAnswers   Json?
   memory         String?
-  status         String      @default("active")
-  createdAt      DateTime    @default(now())
+  status         String          @default("active")
+  createdAt      DateTime        @default(now())
   messages       Message[]
   groupMembers   GroupChatMember[]
   files          AgentFile[]
+  scheduledTasks ScheduledTask[]
+}
+
+model WebCredential {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  siteName  String
+  siteUrl   String
+  username  String
+  password  String   // AES-256-GCM encrypted
+  createdAt DateTime @default(now())
+}
+
+model ScheduledTask {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId     String
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name        String
+  prompt      String
+  cronExpr    String
+  enabled     Boolean   @default(true)
+  lastRun     DateTime?
+  nextRun     DateTime?
+  lastResult  String?
+  createdAt   DateTime  @default(now())
+}
+
+model BrowseActivity {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId   String?
+  agentName String?
+  url       String
+  domain    String
+  summary   String?
+  createdAt DateTime @default(now())
 }
 
 model AgentFile {

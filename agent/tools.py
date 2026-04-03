@@ -1,6 +1,7 @@
 """Tool definitions and execution for agent integrations."""
 
 import json
+import os
 import httpx
 
 # ─── Tool schemas (passed to Claude) ─────────────────────────────────────────
@@ -93,10 +94,38 @@ CREATE_NOTION_PAGE_TOOL = {
     },
 }
 
+BROWSE_WEBSITE_TOOL = {
+    "name": "browse_website",
+    "description": (
+        "Visit any website, read its content, click buttons, fill forms, and extract data. "
+        "Use this when you need to get information from a website or take actions on a website "
+        "on behalf of the user. Returns the page text content. "
+        "Examples: check prices, read news, pull analytics, submit forms, check order status."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "Full URL to visit, e.g. https://example.com/dashboard",
+            },
+            "instructions": {
+                "type": "string",
+                "description": "What to do or extract from the page — be specific",
+            },
+            "screenshot": {
+                "type": "boolean",
+                "description": "Whether to capture a screenshot of the page (default false)",
+            },
+        },
+        "required": ["url", "instructions"],
+    },
+}
+
 
 def get_available_tools(integrations: dict) -> list:
     """Return tool definitions for connected integrations only."""
-    tools = []
+    tools = [BROWSE_WEBSITE_TOOL]  # always available
     if integrations.get("google_access_token"):
         tools.extend([SEND_EMAIL_TOOL, READ_SHEET_TOOL, WRITE_SHEET_TOOL, CREATE_CALENDAR_EVENT_TOOL])
     if integrations.get("slack_token"):
@@ -123,7 +152,9 @@ def _google_headers(access_token: str) -> dict:
 def execute_tool(name: str, inputs: dict, integrations: dict) -> str:
     """Execute a tool and return a concise string result."""
     try:
-        if name == "send_email":
+        if name == "browse_website":
+            return _browse_website(inputs, integrations)
+        elif name == "send_email":
             return _send_email(inputs, integrations["google_access_token"])
         elif name == "read_sheet":
             return _read_sheet(inputs, integrations["google_access_token"])
@@ -139,6 +170,30 @@ def execute_tool(name: str, inputs: dict, integrations: dict) -> str:
             return f"Unknown tool: {name}"
     except Exception as e:
         return f"Tool error: {str(e)[:200]}"
+
+
+def _browse_website(inputs: dict, integrations: dict) -> str:
+    backend_url = os.environ.get("BACKEND_URL", "http://localhost:3001")
+    payload = {
+        "url": inputs["url"],
+        "instructions": inputs["instructions"],
+        "screenshot": inputs.get("screenshot", False),
+        "agent_id": integrations.get("agent_id"),
+        "agent_name": integrations.get("agent_name"),
+    }
+    r = httpx.post(
+        f"{backend_url}/api/browse",
+        json=payload,
+        timeout=30,
+    )
+    r.raise_for_status()
+    data = r.json()
+    if not data.get("success"):
+        return f"Browse failed: {data.get('error', 'Unknown error')}"
+    content = data.get("content", "")
+    if not content:
+        return "Page loaded but no text content was found."
+    return f"[Page content from {inputs['url']}]\n\n{content}"
 
 
 def _send_email(inputs: dict, access_token: str) -> str:
