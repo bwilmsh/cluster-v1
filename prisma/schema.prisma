@@ -93,19 +93,33 @@ model WebCredential {
 }
 
 model ScheduledTask {
-  id            String    @id @default(cuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agentId       String
-  agent         Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  name          String
-  description   String
-  websiteUrl    String?
-  cronExpr      String
-  active        Boolean   @default(false)
-  lastRunAt     DateTime?
-  lastRunResult String?
-  createdAt     DateTime  @default(now())
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name           String
+  description    String
+  websiteUrl     String?
+  cronExpr       String
+  active         Boolean      @default(false)
+  agentPlan      String?
+  planApproved   Boolean      @default(false)
+  resultDelivery Json         @default("[]")
+  lastRunAt      DateTime?
+  lastRunStatus  String?
+  lastRunResult  String?
+  createdAt      DateTime     @default(now())
+  results        TaskResult[]
+}
+
+model TaskResult {
+  id      String        @id @default(cuid())
+  taskId  String
+  task    ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  runAt   DateTime      @default(now())
+  status  String
+  result  String
 }
 
 model BrowseActivity {
