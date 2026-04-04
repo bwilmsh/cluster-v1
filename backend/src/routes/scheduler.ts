@@ -1,7 +1,25 @@
 import { Router, Request, Response } from 'express'
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
-import { runTask, registerOrUnregisterCronJob, loadAllActiveTasks, generatePlan } from '../services/scheduler'
+import { runTask, registerOrUnregisterCronJob, loadAllActiveTasks } from '../services/scheduler'
+
+/** Extract the first URL found in a string, or null. */
+function extractUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s]+/)
+  return match ? match[0] : null
+}
+
+/** Generate a short 3-5 word title from the task description. */
+function generateTitle(description: string): string {
+  // Strip URLs and punctuation, then take first 4 words
+  const clean = description
+    .replace(/https?:\/\/[^\s]+/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .trim()
+  const words = clean.split(/\s+/).filter((w) => w.length > 2)
+  const title = words.slice(0, 4).join(' ')
+  return title.charAt(0).toUpperCase() + title.slice(1)
+}
 
 export { loadAllActiveTasks }
 
@@ -69,33 +87,38 @@ schedulerRouter.get('/task/:id/results', async (req: Request, res: Response) => 
   }
 })
 
-// POST /api/scheduler/tasks — create a new scheduled task and kick off plan generation
+// POST /api/scheduler/tasks — create a new scheduled task (active and pre-approved by default)
 schedulerRouter.post('/tasks', async (req: Request, res: Response) => {
   try {
-    const { agentId, name, description, cronExpr, resultDelivery } = req.body
-    if (!agentId || !name || !description || !cronExpr) {
-      return res.status(400).json({ error: 'agentId, name, description, cronExpr required' })
+    const { agentId, description, cronExpr, resultDelivery } = req.body
+    if (!agentId || !description || !cronExpr) {
+      return res.status(400).json({ error: 'agentId, description, cronExpr required' })
     }
     if (!cron.validate(cronExpr)) {
       return res.status(400).json({ error: 'Invalid cron expression' })
     }
     const user = await getDefaultUser()
+
+    const name = generateTitle(description)
+    const websiteUrl = extractUrl(description)
+
     const task = await prisma.scheduledTask.create({
       data: {
         userId: user.id,
         agentId,
         name,
         description,
+        websiteUrl,
         cronExpr,
-        active: false,
-        planApproved: false,
+        active: true,
+        planApproved: true,
         resultDelivery: resultDelivery ?? [],
       },
       include: { agent: true },
     })
 
-    // Fire-and-forget plan generation
-    generatePlan(task.id).catch(console.error)
+    // Register the cron job immediately since it's auto-approved
+    registerOrUnregisterCronJob({ id: task.id, active: true, cronExpr: task.cronExpr, planApproved: true })
 
     res.status(201).json(task)
   } catch (err) {
