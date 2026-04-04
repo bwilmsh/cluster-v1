@@ -10,7 +10,7 @@ import { widgetsRouter } from './routes/widgets'
 import { clusterRouter } from './routes/cluster'
 import { browseRouter } from './routes/browse'
 import { credentialsRouter } from './routes/credentials'
-import { schedulerRouter, loadAllActiveTasks } from './routes/scheduler'
+import { schedulerRouter, loadActiveTasks } from './routes/scheduler'
 
 dotenv.config({ path: '../.env' })
 
@@ -36,7 +36,7 @@ app.use('/api/scheduler', schedulerRouter)
 const PORT = process.env.BACKEND_PORT ?? 3001
 app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`)
-  await loadAllActiveTasks()
+  await loadActiveTasks()
 })
 
 export { app }

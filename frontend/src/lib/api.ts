@@ -194,52 +194,26 @@ export const api = {
 
   scheduler: {
     list: (): Promise<ScheduledTask[]> =>
-      fetch(`${BASE}/scheduler/tasks`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
+      fetch(`${BASE}/scheduler`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
 
-    get: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/task/${id}`).then((r) => r.json()),
-
-    create: (data: { agentId: string; name: string; description: string; cronExpr: string; resultDelivery?: DeliveryMethod[] }): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/tasks`, {
+    create: (data: { agentId: string; name: string; description: string; cronExpr: string }): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }).then((r) => r.json()),
 
-    approvePlan: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/task/${id}/approve-plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }).then((r) => r.json()),
-
-    updatePlan: (id: string, agentPlan: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/task/${id}/plan`, {
+    toggle: (id: string): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler/${id}/toggle`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentPlan }),
-      }).then((r) => r.json()),
-
-    activate: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/tasks/${id}/activate`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-      }).then((r) => r.json()),
-
-    update: (id: string, data: Partial<{ cronExpr: string; description: string; name: string; resultDelivery: DeliveryMethod[] }>): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
       }).then((r) => r.json()),
 
     runNow: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/tasks/${id}/run`, { method: 'POST' }).then((r) => r.json()),
-
-    results: (id: string): Promise<TaskResult[]> =>
-      fetch(`${BASE}/scheduler/task/${id}/results`).then((r) => r.json()).then((d) => safeArray<TaskResult>(d)),
+      fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
     delete: (id: string): Promise<void> =>
-      fetch(`${BASE}/scheduler/tasks/${id}`, { method: 'DELETE' }).then(() => undefined),
+      fetch(`${BASE}/scheduler/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
 
   browse: {
@@ -256,12 +230,6 @@ export interface WebCredential {
   createdAt: string
 }
 
-export interface DeliveryMethod {
-  type: 'email' | 'groupchat'
-  to?: string          // for email
-  groupChatId?: string // for groupchat
-}
-
 export interface ScheduledTask {
   id: string
   agentId: string
@@ -270,21 +238,9 @@ export interface ScheduledTask {
   description: string
   cronExpr: string
   active: boolean
-  agentPlan: string | null
-  planApproved: boolean
-  resultDelivery: DeliveryMethod[]
   lastRunAt: string | null
-  lastRunStatus: string | null
   lastRunResult: string | null
   createdAt: string
-}
-
-export interface TaskResult {
-  id: string
-  taskId: string
-  runAt: string
-  status: string
-  result: string
 }
 
 export interface BrowseActivity {
