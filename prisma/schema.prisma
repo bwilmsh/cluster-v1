@@ -100,6 +100,7 @@ model ScheduledTask {
   agent         Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   name          String
   description   String
+  websiteUrl    String?
   cronExpr      String
   active        Boolean   @default(true)
   lastRunAt     DateTime?
