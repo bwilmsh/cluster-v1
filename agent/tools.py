@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import httpx
+from urllib.parse import quote_plus
 
 # ─── Tool schemas (passed to Claude) ─────────────────────────────────────────
 
@@ -123,9 +125,78 @@ BROWSE_WEBSITE_TOOL = {
 }
 
 
+SEARCH_WEB_TOOL = {
+    "name": "search_web",
+    "description": (
+        "Search the web and return the top results with titles, URLs, and descriptions. "
+        "Use this to find current information, news, prices, or anything that requires "
+        "a web search rather than visiting a specific URL."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query, e.g. 'best running shoes 2025' or 'Python asyncio tutorial'",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+READ_PAGE_CONTENT_TOOL = {
+    "name": "read_page_content",
+    "description": (
+        "Fetch and return the text content of a URL without a full browser. "
+        "Fast and lightweight — use for articles, documentation, and static pages. "
+        "For JavaScript-heavy sites, pages that require login, or when you need to "
+        "click/fill forms, use browse_website instead."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "Full URL to fetch, e.g. https://example.com/article",
+            },
+        },
+        "required": ["url"],
+    },
+}
+
+RUN_SCHEDULED_SUMMARY_TOOL = {
+    "name": "run_scheduled_summary",
+    "description": (
+        "Format collected data into a clean, structured summary. "
+        "Use this at the end of a scheduled task to present your findings clearly "
+        "before the response is saved."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Summary heading, e.g. 'TikTok Analytics — 14 Jun 2025'",
+            },
+            "findings": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Key findings or data points, one per item",
+            },
+            "conclusion": {
+                "type": "string",
+                "description": "Overall takeaway or recommendation (optional)",
+            },
+        },
+        "required": ["title", "findings"],
+    },
+}
+
+
 def get_available_tools(integrations: dict) -> list:
-    """Return tool definitions for connected integrations only."""
-    tools = [BROWSE_WEBSITE_TOOL]  # always available
+    """Return tool definitions based on available integrations."""
+    # Always available — no OAuth required
+    tools = [BROWSE_WEBSITE_TOOL, SEARCH_WEB_TOOL, READ_PAGE_CONTENT_TOOL, RUN_SCHEDULED_SUMMARY_TOOL]
     if integrations.get("google_access_token"):
         tools.extend([SEND_EMAIL_TOOL, READ_SHEET_TOOL, WRITE_SHEET_TOOL, CREATE_CALENDAR_EVENT_TOOL])
     if integrations.get("slack_token"):
@@ -154,6 +225,12 @@ def execute_tool(name: str, inputs: dict, integrations: dict) -> str:
     try:
         if name == "browse_website":
             return _browse_website(inputs, integrations)
+        elif name == "search_web":
+            return _search_web(inputs)
+        elif name == "read_page_content":
+            return _read_page_content(inputs)
+        elif name == "run_scheduled_summary":
+            return _run_scheduled_summary(inputs)
         elif name == "send_email":
             return _send_email(inputs, integrations["google_access_token"])
         elif name == "read_sheet":
@@ -194,6 +271,83 @@ def _browse_website(inputs: dict, integrations: dict) -> str:
     if not content:
         return "Page loaded but no text content was found."
     return f"[Page content from {inputs['url']}]\n\n{content}"
+
+
+def _search_web(inputs: dict) -> str:
+    """Search DuckDuckGo and return top results."""
+    from bs4 import BeautifulSoup
+
+    query = inputs["query"]
+    url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+    r = httpx.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; ClusterAgent/1.0)"},
+        timeout=15,
+        follow_redirects=True,
+    )
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    results = []
+
+    links = soup.find_all("a", class_="result-link")
+    snippets = soup.find_all("td", class_="result-snippet")
+
+    for i, (link, snippet) in enumerate(zip(links, snippets)):
+        if i >= 6:
+            break
+        title = link.get_text(strip=True)
+        href = link.get("href", "")
+        text = snippet.get_text(strip=True)
+        results.append(f"{i + 1}. {title}\n   {href}\n   {text}")
+
+    if not results:
+        return f"No results found for: {query}"
+
+    return f"Search results for '{query}':\n\n" + "\n\n".join(results)
+
+
+def _read_page_content(inputs: dict) -> str:
+    """Fetch a URL and return its text content (no full browser)."""
+    from bs4 import BeautifulSoup
+
+    url = inputs["url"]
+    r = httpx.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; ClusterAgent/1.0)"},
+        timeout=15,
+        follow_redirects=True,
+    )
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    # Remove noise elements
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
+        tag.decompose()
+
+    text = soup.get_text(separator="\n", strip=True)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    if not text:
+        return f"No readable text content found at {url}"
+
+    return f"[Content from {url}]\n\n{text[:4000]}"
+
+
+def _run_scheduled_summary(inputs: dict) -> str:
+    """Format a structured summary from collected data."""
+    title = inputs["title"]
+    findings = inputs.get("findings", [])
+    conclusion = inputs.get("conclusion", "")
+
+    lines = [f"# {title}", ""]
+    for i, finding in enumerate(findings, 1):
+        lines.append(f"{i}. {finding}")
+    if conclusion:
+        lines.extend(["", f"Conclusion: {conclusion}"])
+
+    return "\n".join(lines)
 
 
 def _send_email(inputs: dict, access_token: str) -> str:
