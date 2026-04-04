@@ -7,7 +7,24 @@ export { loadAllActiveTasks }
 
 export const schedulerRouter = Router()
 
-// GET /api/scheduler/tasks — list all tasks for default user (agent always included)
+// GET /api/scheduler/tasks/:userId — fetch all tasks for a user with agent included
+// (Single-tenant: userId param accepted but default user is always used)
+schedulerRouter.get('/tasks/:userId', async (_req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const tasks = await prisma.scheduledTask.findMany({
+      where: { userId: user.id },
+      include: { agent: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    res.json(tasks)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/scheduler/tasks — also support without userId param
 schedulerRouter.get('/tasks', async (_req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
@@ -26,19 +43,26 @@ schedulerRouter.get('/tasks', async (_req: Request, res: Response) => {
 // POST /api/scheduler/tasks — create a new scheduled task
 schedulerRouter.post('/tasks', async (req: Request, res: Response) => {
   try {
-    const { agentId, name, prompt, cronExpr } = req.body
-    if (!agentId || !name || !prompt || !cronExpr) {
-      return res.status(400).json({ error: 'agentId, name, prompt, cronExpr required' })
+    const { agentId, name, description, websiteUrl, cronExpr } = req.body
+    if (!agentId || !name || !description || !cronExpr) {
+      return res.status(400).json({ error: 'agentId, name, description, cronExpr required' })
     }
     if (!cron.validate(cronExpr)) {
       return res.status(400).json({ error: 'Invalid cron expression' })
     }
     const user = await getDefaultUser()
     const task = await prisma.scheduledTask.create({
-      data: { userId: user.id, agentId, name, prompt, cronExpr },
+      data: {
+        userId: user.id,
+        agentId,
+        name,
+        description,
+        websiteUrl: websiteUrl || null,
+        cronExpr,
+      },
       include: { agent: true },
     })
-    registerOrUnregisterCronJob(task)
+    // Tasks start inactive; user must activate explicitly
     res.status(201).json(task)
   } catch (err) {
     console.error(err)
@@ -46,7 +70,7 @@ schedulerRouter.post('/tasks', async (req: Request, res: Response) => {
   }
 })
 
-// PATCH /api/scheduler/tasks/:id/activate — toggle active status
+// PATCH /api/scheduler/tasks/:id/activate — toggle active/paused
 schedulerRouter.patch('/tasks/:id/activate', async (req: Request, res: Response) => {
   try {
     const existing = await prisma.scheduledTask.findUnique({ where: { id: req.params.id } })
@@ -65,17 +89,18 @@ schedulerRouter.patch('/tasks/:id/activate', async (req: Request, res: Response)
   }
 })
 
-// PATCH /api/scheduler/tasks/:id — update cronExpr / prompt / name
+// PATCH /api/scheduler/tasks/:id — update fields
 schedulerRouter.patch('/tasks/:id', async (req: Request, res: Response) => {
   try {
-    const { cronExpr, prompt, name } = req.body
+    const { cronExpr, description, name, websiteUrl } = req.body
     const updates: Record<string, any> = {}
     if (cronExpr !== undefined) {
       if (!cron.validate(cronExpr)) return res.status(400).json({ error: 'Invalid cron expression' })
       updates.cronExpr = cronExpr
     }
-    if (prompt !== undefined) updates.prompt = prompt
+    if (description !== undefined) updates.description = description
     if (name !== undefined) updates.name = name
+    if (websiteUrl !== undefined) updates.websiteUrl = websiteUrl || null
 
     const task = await prisma.scheduledTask.update({
       where: { id: req.params.id },
@@ -108,7 +133,6 @@ schedulerRouter.post('/tasks/:id/run', async (req: Request, res: Response) => {
 // DELETE /api/scheduler/tasks/:id
 schedulerRouter.delete('/tasks/:id', async (req: Request, res: Response) => {
   try {
-    // Unregister cron job first
     registerOrUnregisterCronJob({ id: req.params.id, active: false, cronExpr: '' })
     await prisma.scheduledTask.delete({ where: { id: req.params.id } })
     res.status(204).send()

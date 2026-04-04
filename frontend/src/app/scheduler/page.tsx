@@ -142,19 +142,16 @@ function TaskForm({
         })
       }
 
-      // Build prompt: prepend URL if given
-      const prompt = form.url
-        ? `Visit ${form.url} and ${form.description.trim()}`
-        : form.description.trim()
-
+      const description = form.description.trim()
       // Build name from description (first ~40 chars)
-      const name = prompt.length > 45 ? prompt.slice(0, 42) + '…' : prompt
+      const name = description.length > 45 ? description.slice(0, 42) + '…' : description
 
       const cronExpr = buildCron(form.repeat, parseInt(form.hour), parseInt(form.minute))
       const task = await api.scheduler.create({
         agentId: form.agentId,
         name,
-        prompt,
+        description,
+        websiteUrl: form.url || undefined,
         cronExpr,
       })
 

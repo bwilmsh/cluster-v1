@@ -196,7 +196,7 @@ export const api = {
     list: (): Promise<ScheduledTask[]> =>
       fetch(`${BASE}/scheduler/tasks`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
 
-    create: (data: { agentId: string; name: string; prompt: string; cronExpr: string }): Promise<ScheduledTask> =>
+    create: (data: { agentId: string; name: string; description: string; websiteUrl?: string; cronExpr: string }): Promise<ScheduledTask> =>
       fetch(`${BASE}/scheduler/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -242,11 +242,11 @@ export interface ScheduledTask {
   agentId: string
   agent: { id: string; name: string } | null
   name: string
-  prompt: string
+  description: string
+  websiteUrl: string | null
   cronExpr: string
   active: boolean
   lastRunAt: string | null
-  nextRun: string | null
   lastRunResult: string | null
   createdAt: string
 }

@@ -24,6 +24,11 @@ export async function runTask(taskId: string): Promise<void> {
   if (!task || !task.active) return
   if (!task.agent) return
 
+  // Build the message: prepend website URL if provided
+  const message = task.websiteUrl
+    ? `Visit ${task.websiteUrl} and ${task.description}`
+    : task.description
+
   // Mark last run time immediately
   await prisma.scheduledTask.update({
     where: { id: taskId },
@@ -42,7 +47,7 @@ export async function runTask(taskId: string): Promise<void> {
         setup_answers: task.agent.setupAnswers ?? {},
         memory: task.agent.memory ?? '',
         history: [],
-        message: task.prompt,
+        message,
         integrations: {},
         files: [],
       }),
@@ -89,7 +94,7 @@ export async function runTask(taskId: string): Promise<void> {
             agentId: task.agentId,
             userId: user.id,
             role: 'user',
-            content: `[Scheduled: ${task.name}] ${task.prompt}`,
+            content: `[Scheduled: ${task.name}] ${message}`,
           },
           {
             agentId: task.agentId,
