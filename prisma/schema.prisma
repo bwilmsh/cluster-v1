@@ -93,19 +93,19 @@ model WebCredential {
 }
 
 model ScheduledTask {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agentId     String
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  name        String
-  prompt      String
-  cronExpr    String
-  enabled     Boolean   @default(true)
-  lastRun     DateTime?
-  nextRun     DateTime?
-  lastResult  String?
-  createdAt   DateTime  @default(now())
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId       String
+  agent         Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name          String
+  prompt        String
+  cronExpr      String
+  active        Boolean   @default(true)
+  lastRunAt     DateTime?
+  nextRun       DateTime?
+  lastRunResult String?
+  createdAt     DateTime  @default(now())
 }
 
 model BrowseActivity {

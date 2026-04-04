@@ -194,27 +194,33 @@ export const api = {
 
   scheduler: {
     list: (): Promise<ScheduledTask[]> =>
-      fetch(`${BASE}/scheduler`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
+      fetch(`${BASE}/scheduler/tasks`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
 
     create: (data: { agentId: string; name: string; prompt: string; cronExpr: string }): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler`, {
+      fetch(`${BASE}/scheduler/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }).then((r) => r.json()),
 
-    update: (id: string, data: Partial<{ enabled: boolean; cronExpr: string; prompt: string; name: string }>): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/${id}`, {
+    activate: (id: string): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler/tasks/${id}/activate`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      }).then((r) => r.json()),
+
+    update: (id: string, data: Partial<{ cronExpr: string; prompt: string; name: string }>): Promise<ScheduledTask> =>
+      fetch(`${BASE}/scheduler/tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }).then((r) => r.json()),
 
     runNow: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+      fetch(`${BASE}/scheduler/tasks/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
     delete: (id: string): Promise<void> =>
-      fetch(`${BASE}/scheduler/${id}`, { method: 'DELETE' }).then(() => undefined),
+      fetch(`${BASE}/scheduler/tasks/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
 
   browse: {
@@ -237,11 +243,11 @@ export interface ScheduledTask {
   agent: { id: string; name: string } | null
   name: string
   prompt: string
-  cronExpr: string | null
-  enabled: boolean
-  lastRun: string | null
+  cronExpr: string
+  active: boolean
+  lastRunAt: string | null
   nextRun: string | null
-  lastResult: string | null
+  lastRunResult: string | null
   createdAt: string
 }
 

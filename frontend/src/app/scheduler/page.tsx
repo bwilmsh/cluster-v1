@@ -337,8 +337,8 @@ function TaskCard({
   return (
     <div className="group bg-surface-raised border border-surface-border rounded-xl p-5 hover:border-white/10 transition-colors">
       <div className="flex items-start gap-4">
-        {/* Enable toggle */}
-        <Toggle on={task.enabled} onChange={onToggle} />
+        {/* Active toggle */}
+        <Toggle on={task.active} onChange={onToggle} />
 
         <div className="flex-1 min-w-0">
           {/* Header row */}
@@ -351,21 +351,21 @@ function TaskCard({
             <span className="text-xs text-white/35">{agentName}</span>
             <span className="text-white/15 text-xs">·</span>
             <span className="text-xs text-white/35">{cronToLabel(task.cronExpr ?? '')}</span>
-            {!task.enabled && (
+            {!task.active && (
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-white/25">Paused</span>
             )}
           </div>
 
           {/* Last result */}
-          {task.lastResult && (
+          {task.lastRunResult && (
             <div className="mt-3 bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2.5">
-              <p className="text-[11px] text-white/30 mb-1">Last result · {formatDate(task.lastRun)}</p>
-              <p className="text-xs text-white/50 leading-relaxed line-clamp-3">{task.lastResult}</p>
+              <p className="text-[11px] text-white/30 mb-1">Last result · {formatDate(task.lastRunAt)}</p>
+              <p className="text-xs text-white/50 leading-relaxed line-clamp-3">{task.lastRunResult}</p>
             </div>
           )}
 
-          {!task.lastResult && task.lastRun && (
-            <p className="text-xs text-white/20 mt-2">Last run {formatDate(task.lastRun)} · no result</p>
+          {!task.lastRunResult && task.lastRunAt && (
+            <p className="text-xs text-white/20 mt-2">Last run {formatDate(task.lastRunAt)} · no result</p>
           )}
         </div>
 
@@ -419,7 +419,7 @@ export default function SchedulerPage() {
   }, [])
 
   async function handleToggle(task: ScheduledTask) {
-    const updated = await api.scheduler.update(task.id, { enabled: !task.enabled })
+    const updated = await api.scheduler.activate(task.id)
     setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)))
   }
 
