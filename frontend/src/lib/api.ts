@@ -234,10 +234,10 @@ export interface WebCredential {
 export interface ScheduledTask {
   id: string
   agentId: string
-  agent: { id: string; name: string }
+  agent: { id: string; name: string } | null
   name: string
   prompt: string
-  cronExpr: string
+  cronExpr: string | null
   enabled: boolean
   lastRun: string | null
   nextRun: string | null

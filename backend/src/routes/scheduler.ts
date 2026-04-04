@@ -115,7 +115,7 @@ function scheduleTask(taskId: string, cronExpr: string) {
 
   if (!cron.validate(cronExpr)) return
 
-  const job = cron.schedule(cronExpr, () => runTask(taskId), { scheduled: true })
+  const job = cron.schedule(cronExpr, () => runTask(taskId))
   activeJobs.set(taskId, job)
 }
 
@@ -141,7 +141,7 @@ schedulerRouter.get('/', async (_req, res: Response) => {
     const user = await getDefaultUser()
     const tasks = await prisma.scheduledTask.findMany({
       where: { userId: user.id },
-      include: { agent: { select: { id: true, name: true } } },
+      include: { agent: true },
       orderBy: { createdAt: 'desc' },
     })
     res.json(tasks)
@@ -163,7 +163,7 @@ schedulerRouter.post('/', async (req: Request, res: Response) => {
     const user = await getDefaultUser()
     const task = await prisma.scheduledTask.create({
       data: { userId: user.id, agentId, name, prompt, cronExpr },
-      include: { agent: { select: { id: true, name: true } } },
+      include: { agent: true },
     })
     scheduleTask(task.id, task.cronExpr)
     res.status(201).json(task)
@@ -188,7 +188,7 @@ schedulerRouter.patch('/:id', async (req: Request, res: Response) => {
     const task = await prisma.scheduledTask.update({
       where: { id: req.params.id },
       data: updates,
-      include: { agent: { select: { id: true, name: true } } },
+      include: { agent: true },
     })
 
     // Re-schedule
@@ -211,7 +211,7 @@ schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
     await runTask(req.params.id)
     const task = await prisma.scheduledTask.findUnique({
       where: { id: req.params.id },
-      include: { agent: { select: { id: true, name: true } } },
+      include: { agent: true },
     })
     res.json(task)
   } catch {
