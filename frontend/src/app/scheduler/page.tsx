@@ -26,6 +26,7 @@ function buildCron(repeat: Repeat, hour: number, min: number): string {
 }
 
 function cronToLabel(expr: string): string {
+  if (!expr) return 'Unknown schedule'
   if (expr === '0 * * * *') return 'Every hour'
   const parts = expr.split(' ')
   if (parts.length < 5) return expr
@@ -349,7 +350,7 @@ function TaskCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-white/35">{agentName}</span>
             <span className="text-white/15 text-xs">·</span>
-            <span className="text-xs text-white/35">{cronToLabel(task.cronExpr)}</span>
+            <span className="text-xs text-white/35">{cronToLabel(task.cronExpr ?? '')}</span>
             {!task.enabled && (
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-white/25">Paused</span>
             )}
