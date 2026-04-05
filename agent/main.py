@@ -130,15 +130,15 @@ def run_tool_use_loop(
             # No more tool calls — done
             return messages
 
-        # Execute all tool calls in this response
+        # Execute client-side tool calls (skip native tools like web_search — Anthropic runs those)
         tool_results = []
         for block in response.content:
-            if block.type == "tool_use":
+            if block.type == "tool_use" and block.name != "web_search":
                 result = execute_tool(block.name, block.input, integrations)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": result[:2000],  # truncate tool output
+                    "content": result[:2000],
                 })
 
         # Append assistant response + tool results to messages
@@ -275,16 +275,23 @@ def _blocks_to_dict(content) -> list[dict]:
     """Convert Anthropic SDK content blocks to plain dicts for re-use in messages."""
     result = []
     for block in content:
-        if hasattr(block, "type"):
-            if block.type == "text":
-                result.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
-                result.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": dict(block.input),
-                })
+        if not hasattr(block, "type"):
+            continue
+        if block.type == "text":
+            result.append({"type": "text", "text": block.text})
+        elif block.type == "tool_use":
+            result.append({
+                "type": "tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": dict(block.input),
+            })
+        else:
+            # Handle native tool blocks (web_search_result, etc.) via Pydantic serialisation
+            if hasattr(block, "model_dump"):
+                result.append(block.model_dump())
+            elif hasattr(block, "__dict__"):
+                result.append({"type": block.type, **{k: v for k, v in block.__dict__.items() if not k.startswith("_")}})
     return result
 
 
@@ -328,11 +335,11 @@ def run_automation(req: AutomateRequest):
             )
             return {"steps": steps, "final_result": final_text}
 
-        # Execute all tool calls in this round
+        # Execute client-side tool calls (skip native tools like web_search)
         assistant_content = _blocks_to_dict(response.content)
         tool_results = []
         for block in response.content:
-            if block.type == "tool_use":
+            if block.type == "tool_use" and block.name != "web_search":
                 try:
                     output = execute_tool(block.name, dict(block.input), enriched)
                 except Exception as e:
@@ -347,6 +354,15 @@ def run_automation(req: AutomateRequest):
                     "type": "tool_result",
                     "tool_use_id": block.id,
                     "content": output[:3000],
+                })
+            elif block.type == "tool_use" and block.name == "web_search":
+                # Native tool — record it as a step for visibility but don't execute
+                query = dict(block.input).get("query", "")
+                steps.append({
+                    "tool": "web_search",
+                    "input": {"query": query[:300]},
+                    "output": "Search handled by Anthropic",
+                    "status": "success",
                 })
 
         # Use plain dicts (not SDK objects) so the SDK doesn't choke on re-serialization

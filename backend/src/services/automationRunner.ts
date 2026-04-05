@@ -31,6 +31,9 @@ export async function runAutomation(automationId: string): Promise<void> {
   let status = 'success'
 
   try {
+    const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    const dateNote = `Today's date is ${today}. Always search for current, up to date information. Never reference 2024 data when 2025 or 2026 information is available. When searching, include the current year in your queries.`
+
     const resp = await fetch(`${PYTHON_URL()}/automate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -38,7 +41,7 @@ export async function runAutomation(automationId: string): Promise<void> {
         agent_name: automation.agent.name,
         agent_id: automation.agent.id,
         setup_answers: automation.agent.setupAnswers ?? {},
-        memory: automation.agent.memory ?? '',
+        memory: automation.agent.memory ? `${automation.agent.memory}\n\n${dateNote}` : dateNote,
         goal: automation.goal,
         integrations: {},
       }),
@@ -55,16 +58,17 @@ export async function runAutomation(automationId: string): Promise<void> {
     finalResult = `Error: ${(err as Error).message}`
   }
 
-  await Promise.all([
-    prisma.automationRun.update({
-      where: { id: run.id },
-      data: { status, steps, finalResult: finalResult.slice(0, 20000), completedAt: new Date() },
-    }),
-    prisma.automation.update({
-      where: { id: automationId },
-      data: { lastRunAt: new Date(), lastRunStatus: status },
-    }),
-  ]).catch(console.error)
+  // Save run result — always do this first so results are visible
+  await prisma.automationRun.update({
+    where: { id: run.id },
+    data: { status, steps, finalResult: finalResult.slice(0, 20000), completedAt: new Date() },
+  }).catch((err) => console.error('Failed to save run result:', err))
+
+  // Update automation status — use updateMany so it silently no-ops if deleted
+  await prisma.automation.updateMany({
+    where: { id: automationId },
+    data: { lastRunAt: new Date(), lastRunStatus: status },
+  }).catch((err) => console.error('Failed to update automation status:', err))
 }
 
 // ─── Register / unregister cron job ──────────────────────────────────────────

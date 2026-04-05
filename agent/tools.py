@@ -4,7 +4,6 @@ import json
 import os
 import re
 import httpx
-from urllib.parse import quote_plus
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
 
@@ -29,20 +28,10 @@ BROWSE_WEBSITE_TOOL = {
     },
 }
 
-SEARCH_WEB_TOOL = {
-    "name": "search_web",
-    "description": (
-        "Search the web and return the top results with titles, URLs, and descriptions. "
-        "Use this to find current information, news, prices, or anything that requires "
-        "a web search rather than visiting a specific known URL."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "Search query, e.g. 'best running shoes 2025'"},
-        },
-        "required": ["query"],
-    },
+# Anthropic native web search — executed server-side, no API key needed
+WEB_SEARCH_NATIVE_TOOL = {
+    "type": "web_search_20250305",
+    "name": "web_search",
 }
 
 READ_PAGE_CONTENT_TOOL = {
@@ -283,8 +272,8 @@ def get_available_tools(integrations: dict) -> list:
     """Return tool definitions based on available integrations and env config."""
     # Always available — no OAuth or credentials required
     tools = [
+        WEB_SEARCH_NATIVE_TOOL,
         BROWSE_WEBSITE_TOOL,
-        SEARCH_WEB_TOOL,
         READ_PAGE_CONTENT_TOOL,
         FILL_FORM_TOOL,
         CLICK_ELEMENT_TOOL,
@@ -317,11 +306,13 @@ def get_available_tools(integrations: dict) -> list:
 def execute_tool(name: str, inputs: dict, integrations: dict) -> str:
     """Execute a tool by name and return a concise string result."""
     try:
+        # Native tools are executed server-side by Anthropic — nothing to do client-side
+        if name == "web_search":
+            return ""
+
         # Core browser tools
         if name == "browse_website":
             return _browse_website(inputs, integrations)
-        elif name == "search_web":
-            return _search_web(inputs)
         elif name == "read_page_content":
             return _read_page_content(inputs)
         elif name == "fill_form":
@@ -391,38 +382,41 @@ def _browse_website(inputs: dict, integrations: dict) -> str:
     return f"[Page content from {inputs['url']}]\n\n{content}" if content else "Page loaded but no text content found."
 
 
-def _search_web(inputs: dict) -> str:
-    from bs4 import BeautifulSoup
-    query = inputs["query"]
-    url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
-    r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ClusterAgent/1.0)"}, timeout=15, follow_redirects=True)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    results = []
-    links = soup.find_all("a", class_="result-link")
-    snippets = soup.find_all("td", class_="result-snippet")
-    for i, (link, snippet) in enumerate(zip(links, snippets)):
-        if i >= 6:
-            break
-        title = link.get_text(strip=True)
-        href = link.get("href", "")
-        text = snippet.get_text(strip=True)
-        results.append(f"{i + 1}. {title}\n   {href}\n   {text}")
-    if not results:
-        return f"No results found for: {query}"
-    return f"Search results for '{query}':\n\n" + "\n\n".join(results)
-
-
 def _read_page_content(inputs: dict) -> str:
     from bs4 import BeautifulSoup
     url = inputs["url"]
-    r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ClusterAgent/1.0)"}, timeout=15, follow_redirects=True)
+    # Realistic browser headers to avoid basic bot detection
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+    r = httpx.get(url, headers=headers, timeout=20, follow_redirects=True)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
+
+    # Detect Cloudflare / bot-protection pages
+    bot_indicators = ["cf-browser-verification", "Just a moment", "DDoS protection by Cloudflare",
+                      "Please enable JavaScript", "Enable JavaScript and cookies to continue",
+                      "Access denied", "Bot detection", "Ray ID"]
+    is_bot_page = any(phrase in r.text for phrase in bot_indicators)
+
     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
         tag.decompose()
     text = soup.get_text(separator="\n", strip=True)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    if is_bot_page:
+        if text and len(text) > 100:
+            return f"[Warning: Bot protection detected at {url}. Partial content below — use browse_website for full access]\n\n{text[:4000]}"
+        return f"Bot/Cloudflare protection at {url}. Use browse_website tool instead, which runs a full browser."
+
     if not text:
         return f"No readable text content found at {url}"
     return f"[Content from {url}]\n\n{text[:4000]}"
