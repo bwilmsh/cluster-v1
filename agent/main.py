@@ -262,6 +262,94 @@ async def group_chat(req: GroupChatRequest):
     )
 
 
+class AutomateRequest(BaseModel):
+    agent_name: str
+    agent_id: str = ""
+    setup_answers: dict[str, Any] = {}
+    memory: str = ""
+    goal: str
+    integrations: dict[str, Any] = {}
+
+
+@app.post("/automate")
+def run_automation(req: AutomateRequest):
+    """
+    Runs a full autonomous reasoning loop for an automation goal.
+    Returns structured steps + final report (non-streaming).
+    """
+    client = get_client()
+    enriched = {**req.integrations, "agent_id": req.agent_id, "agent_name": req.agent_name}
+    tools = get_available_tools(enriched)
+
+    system_prompt = (
+        f"You are {req.agent_name}, running an autonomous automation task — not a chat conversation.\n"
+        + (f"Context about you:\n{req.memory}\n\n" if req.memory else "")
+        + "Execute the goal step by step using your tools. "
+        "Do NOT ask questions or wait for input. "
+        "When you have gathered all necessary information, compile a structured final report with these exact sections:\n\n"
+        "## Summary\n"
+        "## Key Findings\n"
+        "## Action Items\n"
+        "## Alerts"
+    )
+
+    messages: list[dict] = [{"role": "user", "content": req.goal}]
+    steps: list[dict] = []
+
+    for _ in range(15):  # max 15 tool-use rounds
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=messages,
+            tools=tools if tools else anthropic.NOT_GIVEN,
+        )
+
+        if response.stop_reason != "tool_use":
+            # Final answer — collect text
+            final_text = "".join(
+                block.text for block in response.content if hasattr(block, "text")
+            )
+            return {"steps": steps, "final_result": final_text}
+
+        # Execute tool calls and record as steps
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                try:
+                    result = execute_tool(block.name, dict(block.input), enriched)
+                except Exception as e:
+                    result = f"Tool error: {e}"
+                steps.append({
+                    "tool": block.name,
+                    "input": {k: str(v)[:200] for k, v in dict(block.input).items()},
+                    "output": result[:400],
+                    "status": "success" if not result.startswith("Tool error") else "failed",
+                })
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result[:2000],
+                })
+
+        messages = messages + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": tool_results},
+        ]
+
+    # Hit step limit — force final answer
+    final_response = client.messages.create(
+        model=MODEL,
+        max_tokens=4096,
+        system=system_prompt,
+        messages=messages + [{"role": "user", "content": "You have reached the step limit. Compile your final report now based on what you have gathered."}],
+    )
+    final_text = "".join(
+        block.text for block in final_response.content if hasattr(block, "text")
+    )
+    return {"steps": steps, "final_result": final_text}
+
+
 @app.post("/group-relevance")
 async def group_relevance(req: GroupRelevanceRequest):
     client = get_client()

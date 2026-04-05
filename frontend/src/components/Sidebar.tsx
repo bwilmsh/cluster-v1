@@ -65,7 +65,7 @@ const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', Icon: HomeIcon },
   { href: '/groupchats', label: 'Group Chats', Icon: ChatIcon },
   { href: '/cluster', label: 'Cluster AI', Icon: SparkleIcon },
-  { href: '/scheduler', label: 'Scheduler', Icon: ClockIcon },
+  { href: '/scheduler', label: 'Automations', Icon: ClockIcon },
   { href: '/credentials', label: 'Credentials', Icon: KeyIcon },
   { href: '/integrations', label: 'Integrations', Icon: PlugIcon },
   { href: '/settings', label: 'Settings', Icon: GearIcon },

@@ -192,31 +192,31 @@ export const api = {
       fetch(`${BASE}/credentials/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
 
-  scheduler: {
-    list: (): Promise<ScheduledTask[]> =>
-      fetch(`${BASE}/scheduler`).then((r) => r.json()).then((d) => safeArray<ScheduledTask>(d)),
+  automations: {
+    list: (): Promise<Automation[]> =>
+      fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => safeArray<Automation>(d)),
 
-    create: (data: { agentId: string; name: string; description: string; cronExpr: string }): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler`, {
+    create: (data: { agentId: string; name: string; goal: string; triggerType: string; cronExpr?: string }): Promise<Automation> =>
+      fetch(`${BASE}/automations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }).then((r) => r.json()),
 
-    toggle: (id: string): Promise<ScheduledTask> =>
-      fetch(`${BASE}/scheduler/${id}/toggle`, {
+    toggle: (id: string): Promise<Automation> =>
+      fetch(`${BASE}/automations/${id}/toggle`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    runNow: (id: string): Promise<{ message: string; taskId: string }> =>
-      fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+    run: (id: string): Promise<{ message: string; automationId: string }> =>
+      fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
-    results: (id: string): Promise<TaskResult[]> =>
-      fetch(`${BASE}/scheduler/${id}/results`).then((r) => r.json()).then((d) => safeArray<TaskResult>(d)),
+    runs: (id: string): Promise<AutomationRun[]> =>
+      fetch(`${BASE}/automations/${id}/runs`).then((r) => r.json()).then((d) => safeArray<AutomationRun>(d)),
 
     delete: (id: string): Promise<void> =>
-      fetch(`${BASE}/scheduler/${id}`, { method: 'DELETE' }).then(() => undefined),
+      fetch(`${BASE}/automations/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
 
   browse: {
@@ -233,26 +233,35 @@ export interface WebCredential {
   createdAt: string
 }
 
-export interface ScheduledTask {
+export interface Automation {
   id: string
   agentId: string
   agent: { id: string; name: string } | null
   name: string
-  description: string
-  websiteUrl: string | null
-  cronExpr: string
+  goal: string
+  triggerType: string
+  cronExpr: string | null
   active: boolean
   lastRunAt: string | null
-  lastRunResult: string | null
+  lastRunStatus: string | null
   createdAt: string
 }
 
-export interface TaskResult {
-  id: string
-  taskId: string
-  runAt: string
+export interface AutomationStep {
+  tool: string
+  input: Record<string, string>
+  output: string
   status: 'success' | 'failed'
-  result: string
+}
+
+export interface AutomationRun {
+  id: string
+  automationId: string
+  startedAt: string
+  completedAt: string | null
+  status: 'running' | 'success' | 'failed'
+  steps: AutomationStep[]
+  finalResult: string | null
 }
 
 export interface BrowseActivity {
