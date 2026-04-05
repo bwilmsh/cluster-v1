@@ -209,7 +209,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    runNow: (id: string): Promise<ScheduledTask> =>
+    runNow: (id: string): Promise<{ message: string; taskId: string }> =>
       fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
     results: (id: string): Promise<TaskResult[]> =>

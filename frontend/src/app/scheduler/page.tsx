@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, Agent, ScheduledTask, TaskResult } from '@/lib/api'
 
 // ─── Cron helpers ─────────────────────────────────────────────────────────────
@@ -260,12 +260,12 @@ function CreateForm({ agents, onCreated, onCancel }: {
 
 // ─── Task card ─────────────────────────────────────────────────────────────────
 
-function TaskCard({ task, onToggle, onRunNow, onDelete, running, resultKey }: {
+function TaskCard({ task, onToggle, onRunNow, onDelete, runState, resultKey }: {
   task: ScheduledTask
   onToggle: () => void
   onRunNow: () => void
   onDelete: () => void
-  running: boolean
+  runState: 'idle' | 'running' | 'done'
   resultKey: number
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -288,7 +288,13 @@ function TaskCard({ task, onToggle, onRunNow, onDelete, running, resultKey }: {
           </div>
           <p className="text-xs text-white/25 mt-1.5 leading-relaxed line-clamp-1">{task.description}</p>
 
-          {task.lastRunAt && (
+          {runState === 'running' && (
+            <p className="text-[11px] text-accent/70 mt-1.5 animate-pulse">Running… checking for result</p>
+          )}
+          {runState === 'done' && (
+            <p className="text-[11px] text-white/30 mt-1.5">Check results panel ↓</p>
+          )}
+          {runState === 'idle' && task.lastRunAt && (
             <p className="text-[11px] text-white/20 mt-1.5">Last run {timeAgo(task.lastRunAt)}</p>
           )}
         </div>
@@ -308,11 +314,11 @@ function TaskCard({ task, onToggle, onRunNow, onDelete, running, resultKey }: {
           {/* Run now */}
           <button
             onClick={onRunNow}
-            disabled={running}
+            disabled={runState !== 'idle'}
             title="Run now"
             className="w-8 h-8 flex items-center justify-center rounded-lg border border-surface-border text-white/30 hover:text-white/70 hover:border-white/20 transition-colors disabled:opacity-40"
           >
-            {running ? (
+            {runState === 'running' ? (
               <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
@@ -353,14 +359,17 @@ export default function SchedulerPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [running, setRunning] = useState<string | null>(null)
-  // track which cards just had a new result saved (to refresh results panel)
+  // per-task run state: 'idle' | 'running' | 'done'
+  const [runStates, setRunStates] = useState<Record<string, 'idle' | 'running' | 'done'>>({})
+  // bump to remount ResultsPanel after new result arrives
   const [refreshKey, setRefreshKey] = useState<Record<string, number>>({})
+  const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
   useEffect(() => {
     Promise.all([api.scheduler.list(), api.agents.list()])
       .then(([t, a]) => { setTasks(t); setAgents(a) })
       .finally(() => setLoading(false))
+    return () => Object.values(pollTimers.current).forEach(clearInterval)
   }, [])
 
   async function handleToggle(task: ScheduledTask) {
@@ -369,15 +378,38 @@ export default function SchedulerPage() {
   }
 
   async function handleRunNow(task: ScheduledTask) {
-    setRunning(task.id)
-    try {
-      const updated = await api.scheduler.runNow(task.id)
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)))
-      // bump refresh key so ResultsPanel remounts and shows the new result
-      setRefreshKey((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? 0) + 1 }))
-    } finally {
-      setRunning(null)
-    }
+    setRunStates((prev) => ({ ...prev, [task.id]: 'running' }))
+
+    // Fire and get immediate ack
+    await api.scheduler.runNow(task.id).catch(console.error)
+
+    // Poll for new result every 3s for up to 60s
+    const startedAt = Date.now()
+    const latestResultId = await api.scheduler.results(task.id)
+      .then((r) => r[0]?.id ?? null).catch(() => null)
+
+    pollTimers.current[task.id] = setInterval(async () => {
+      const elapsed = Date.now() - startedAt
+      try {
+        const results = await api.scheduler.results(task.id)
+        const newResult = results[0]
+        if (newResult && newResult.id !== latestResultId) {
+          // New result arrived
+          clearInterval(pollTimers.current[task.id])
+          delete pollTimers.current[task.id]
+          setRefreshKey((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? 0) + 1 }))
+          setRunStates((prev) => ({ ...prev, [task.id]: 'idle' }))
+          // Also refresh task's lastRunAt
+          api.scheduler.list().then((updated) => setTasks(updated)).catch(() => {})
+          return
+        }
+      } catch {}
+      if (elapsed >= 60_000) {
+        clearInterval(pollTimers.current[task.id])
+        delete pollTimers.current[task.id]
+        setRunStates((prev) => ({ ...prev, [task.id]: 'done' }))
+      }
+    }, 3_000)
   }
 
   async function handleDelete(id: string) {
@@ -437,7 +469,7 @@ export default function SchedulerPage() {
                 onToggle={() => handleToggle(task)}
                 onRunNow={() => handleRunNow(task)}
                 onDelete={() => handleDelete(task.id)}
-                running={running === task.id}
+                runState={runStates[task.id] ?? 'idle'}
                 resultKey={refreshKey[task.id] ?? 0}
               />
             ))}

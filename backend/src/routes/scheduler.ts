@@ -79,15 +79,20 @@ schedulerRouter.get('/:id/results', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/scheduler/:id/run — run now
+// POST /api/scheduler/:id/run — run now (responds immediately, task runs in background)
 schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
-    await runTask(req.params.id)
     const task = await prisma.scheduledTask.findUnique({
       where: { id: req.params.id },
       include: { agent: true },
     })
-    res.json(task)
+    if (!task) return res.status(404).json({ error: 'Not found' })
+
+    // Respond immediately — don't wait for task to complete
+    res.json({ message: 'Task started', taskId: task.id })
+
+    // Run task in background
+    runTask(req.params.id).catch(console.error)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
