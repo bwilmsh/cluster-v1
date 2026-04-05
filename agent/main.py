@@ -271,32 +271,49 @@ class AutomateRequest(BaseModel):
     integrations: dict[str, Any] = {}
 
 
+def _blocks_to_dict(content) -> list[dict]:
+    """Convert Anthropic SDK content blocks to plain dicts for re-use in messages."""
+    result = []
+    for block in content:
+        if hasattr(block, "type"):
+            if block.type == "text":
+                result.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                result.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": dict(block.input),
+                })
+    return result
+
+
 @app.post("/automate")
 def run_automation(req: AutomateRequest):
     """
     Runs a full autonomous reasoning loop for an automation goal.
-    Returns structured steps + final report (non-streaming).
+    Returns structured steps + final report (non-streaming JSON).
     """
     client = get_client()
     enriched = {**req.integrations, "agent_id": req.agent_id, "agent_name": req.agent_name}
     tools = get_available_tools(enriched)
 
     system_prompt = (
-        f"You are {req.agent_name}, running an autonomous automation task — not a chat conversation.\n"
-        + (f"Context about you:\n{req.memory}\n\n" if req.memory else "")
-        + "Execute the goal step by step using your tools. "
-        "Do NOT ask questions or wait for input. "
-        "When you have gathered all necessary information, compile a structured final report with these exact sections:\n\n"
-        "## Summary\n"
-        "## Key Findings\n"
-        "## Action Items\n"
-        "## Alerts"
+        f"You are {req.agent_name}, an autonomous agent executing a scheduled automation task.\n"
+        + (f"{req.memory}\n\n" if req.memory else "")
+        + "IMPORTANT: Do NOT ask questions or wait for input. Execute the goal autonomously using your tools.\n"
+        "Think step by step, use web search and browse tools to gather information, then write a report.\n\n"
+        "When done, your final message MUST follow this exact format:\n\n"
+        "## Summary\n[2-3 sentence overview]\n\n"
+        "## Key Findings\n[bullet points]\n\n"
+        "## Action Items\n[specific next steps, or 'None']\n\n"
+        "## Alerts\n[anything urgent, or 'None']"
     )
 
-    messages: list[dict] = [{"role": "user", "content": req.goal}]
+    messages: list[dict] = [{"role": "user", "content": f"Execute this automation goal: {req.goal}"}]
     steps: list[dict] = []
 
-    for _ in range(15):  # max 15 tool-use rounds
+    for _ in range(15):
         response = client.messages.create(
             model=MODEL,
             max_tokens=4096,
@@ -306,43 +323,44 @@ def run_automation(req: AutomateRequest):
         )
 
         if response.stop_reason != "tool_use":
-            # Final answer — collect text
             final_text = "".join(
                 block.text for block in response.content if hasattr(block, "text")
             )
             return {"steps": steps, "final_result": final_text}
 
-        # Execute tool calls and record as steps
+        # Execute all tool calls in this round
+        assistant_content = _blocks_to_dict(response.content)
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
                 try:
-                    result = execute_tool(block.name, dict(block.input), enriched)
+                    output = execute_tool(block.name, dict(block.input), enriched)
                 except Exception as e:
-                    result = f"Tool error: {e}"
+                    output = f"Tool error: {e}"
                 steps.append({
                     "tool": block.name,
-                    "input": {k: str(v)[:200] for k, v in dict(block.input).items()},
-                    "output": result[:400],
-                    "status": "success" if not result.startswith("Tool error") else "failed",
+                    "input": {k: str(v)[:300] for k, v in dict(block.input).items()},
+                    "output": output[:500],
+                    "status": "error" if output.startswith("Tool error") else "success",
                 })
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": result[:2000],
+                    "content": output[:3000],
                 })
 
+        # Use plain dicts (not SDK objects) so the SDK doesn't choke on re-serialization
         messages = messages + [
-            {"role": "assistant", "content": response.content},
+            {"role": "assistant", "content": assistant_content},
             {"role": "user", "content": tool_results},
         ]
 
-    # Hit step limit — force final answer
+    # Force final answer after step limit
     final_response = client.messages.create(
         model=MODEL,
         max_tokens=4096,
         system=system_prompt,
-        messages=messages + [{"role": "user", "content": "You have reached the step limit. Compile your final report now based on what you have gathered."}],
+        messages=messages + [{"role": "user", "content": "Step limit reached. Write your final report now using the information gathered."}],
     )
     final_text = "".join(
         block.text for block in final_response.content if hasattr(block, "text")
