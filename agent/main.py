@@ -159,9 +159,9 @@ async def stream_chat(
     files: list[dict[str, Any]],
 ) -> AsyncIterator[str]:
     client = get_client()
-    system_prompt = build_system_prompt(agent_name, setup_answers, memory, files or [])
     # Inject agent identity into integrations so browse_website can log activity
     enriched_integrations = {**integrations, "agent_id": agent_id, "agent_name": agent_name}
+    system_prompt = build_system_prompt(agent_name, setup_answers, memory, files or [], enriched_integrations)
     tools = get_available_tools(enriched_integrations)
 
     recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
@@ -205,6 +205,7 @@ async def stream_group_chat(
         sender_name=sender_name,
         history=[m.model_dump() for m in history],
         chat_name=chat_name,
+        integrations=integrations,
     )
     tools = get_available_tools(integrations)
 
@@ -305,11 +306,19 @@ def run_automation(req: AutomateRequest):
     enriched = {**req.integrations, "agent_id": req.agent_id, "agent_name": req.agent_name}
     tools = get_available_tools(enriched)
 
+    # Build base identity from agent context (includes integration awareness)
+    base_prompt = build_system_prompt(
+        agent_name=req.agent_name,
+        setup_answers=req.setup_answers,
+        memory=req.memory,
+        integrations=enriched,
+    )
+
     system_prompt = (
-        f"You are {req.agent_name}, an autonomous agent executing a scheduled automation task.\n"
-        + (f"{req.memory}\n\n" if req.memory else "")
-        + "IMPORTANT: Do NOT ask questions or wait for input. Execute the goal autonomously using your tools.\n"
-        "Think step by step, use web search and browse tools to gather information, then write a report.\n\n"
+        base_prompt + "\n\n"
+        "AUTOMATION MODE: You are executing a scheduled task autonomously.\n"
+        "IMPORTANT: Do NOT ask questions or wait for input. Execute the goal using your tools.\n"
+        "Think step by step. Use web search and browse tools to gather current information.\n\n"
         "When done, your final message MUST follow this exact format:\n\n"
         "## Summary\n[2-3 sentence overview]\n\n"
         "## Key Findings\n[bullet points]\n\n"

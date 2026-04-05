@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { prisma, getDefaultUser } from '../db'
+import { getUserIntegrationTokens } from './integrations'
 
 export const groupChatsRouter = Router()
 
@@ -158,13 +159,17 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Internal server error' })
   }
 
-  // Fetch recent history (includes the user message we just saved)
-  const recentHistory = await prisma.groupChatMessage.findMany({
-    where: { groupChatId: id },
-    orderBy: { createdAt: 'asc' },
-    take: 20,
-    select: { senderName: true, content: true, role: true },
-  })
+  // Fetch integrations + recent history in parallel
+  const user = await getDefaultUser()
+  const [integrationTokens, recentHistory] = await Promise.all([
+    getUserIntegrationTokens(user.id).catch(() => ({} as Record<string, string>)),
+    prisma.groupChatMessage.findMany({
+      where: { groupChatId: id },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+      select: { senderName: true, content: true, role: true },
+    }),
+  ])
 
   const agentMembers = chat.members.filter((m: any) => m.type === 'agent' && m.agent)
 
@@ -252,6 +257,7 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
           history: inTurnHistory,
           message: currentMessage,
           chat_name: chat.name,
+          integrations: integrationTokens,
         }),
       })
 

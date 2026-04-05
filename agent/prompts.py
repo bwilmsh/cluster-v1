@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 
@@ -42,6 +43,25 @@ Keep responses short — this is a team Slack channel not a report.
 ---"""
 
 
+def _integration_context(integrations: dict) -> str:
+    """Build a section telling the agent which integrations are connected and what it can do."""
+    available = []
+    if integrations.get("google_access_token"):
+        available.append("Google — read/send/draft Gmail emails, read/write Google Sheets, create Google Calendar events")
+    if os.environ.get("GMAIL_USER") and not integrations.get("google_access_token"):
+        available.append("Email — send emails via SMTP")
+    if integrations.get("slack_token"):
+        available.append("Slack — send messages to channels")
+    if integrations.get("notion_token"):
+        available.append("Notion — create pages in databases")
+    if not available:
+        return ""
+    lines = ["Connected integrations (you have tools for all of these — use them):"]
+    for item in available:
+        lines.append(f"- {item}")
+    return "\n\n## Connected Integrations\n" + "\n".join(lines)
+
+
 def truncate_memory(memory: str, max_tokens: int = 800) -> str:
     """Rough token estimate: 1 token ≈ 4 chars."""
     max_chars = max_tokens * 4
@@ -55,6 +75,7 @@ def build_system_prompt(
     setup_answers: dict[str, Any],
     memory: str,
     files: list[dict] | None = None,
+    integrations: dict | None = None,
 ) -> str:
     prompt = CORE_PERSONALITY.format(name=agent_name)
 
@@ -64,6 +85,11 @@ def build_system_prompt(
 
     if memory:
         prompt += f"\n\nYour memory:\n{truncate_memory(memory)}"
+
+    if integrations:
+        integration_block = _integration_context(integrations)
+        if integration_block:
+            prompt += integration_block
 
     if files:
         files_block = "\n\n## Uploaded files\n"
@@ -83,6 +109,7 @@ def build_group_system_prompt(
     sender_name: str,
     history: list[dict],
     chat_name: str = "Group Chat",
+    integrations: dict | None = None,
 ) -> str:
     teammates = [m for m in members if m.get("name") != agent_name and m.get("type") == "agent"]
     teammates_parts = []
@@ -107,6 +134,11 @@ def build_group_system_prompt(
 
     if memory:
         prompt += f"\n\nYour memory:\n{truncate_memory(memory)}"
+
+    if integrations:
+        integration_block = _integration_context(integrations)
+        if integration_block:
+            prompt += integration_block
 
     if history:
         recent = history[-20:]

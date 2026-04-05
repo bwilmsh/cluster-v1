@@ -1,5 +1,6 @@
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
+import { getUserIntegrationTokens } from '../routes/integrations'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
@@ -34,6 +35,8 @@ export async function runAutomation(automationId: string): Promise<void> {
     const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
     const dateNote = `Today's date is ${today}. Always search for current, up to date information. Never reference 2024 data when 2025 or 2026 information is available. When searching, include the current year in your queries.`
 
+    const integrationTokens = await getUserIntegrationTokens(automation.userId).catch(() => ({} as Record<string, string>))
+
     const resp = await fetch(`${PYTHON_URL()}/automate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -43,7 +46,7 @@ export async function runAutomation(automationId: string): Promise<void> {
         setup_answers: automation.agent.setupAnswers ?? {},
         memory: automation.agent.memory ? `${automation.agent.memory}\n\n${dateNote}` : dateNote,
         goal: automation.goal,
-        integrations: {},
+        integrations: integrationTokens,
       }),
     })
 
