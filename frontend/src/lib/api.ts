@@ -212,6 +212,9 @@ export const api = {
     runNow: (id: string): Promise<ScheduledTask> =>
       fetch(`${BASE}/scheduler/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
+    results: (id: string): Promise<TaskResult[]> =>
+      fetch(`${BASE}/scheduler/${id}/results`).then((r) => r.json()).then((d) => safeArray<TaskResult>(d)),
+
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/scheduler/${id}`, { method: 'DELETE' }).then(() => undefined),
   },
@@ -236,11 +239,20 @@ export interface ScheduledTask {
   agent: { id: string; name: string } | null
   name: string
   description: string
+  websiteUrl: string | null
   cronExpr: string
   active: boolean
   lastRunAt: string | null
   lastRunResult: string | null
   createdAt: string
+}
+
+export interface TaskResult {
+  id: string
+  taskId: string
+  runAt: string
+  status: 'success' | 'failed'
+  result: string
 }
 
 export interface BrowseActivity {

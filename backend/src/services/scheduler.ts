@@ -3,10 +3,25 @@ import { prisma, getDefaultUser } from '../db'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
-// Active cron jobs keyed by task id
 const jobs = new Map<string, cron.ScheduledTask>()
 
-// ─── Call agent and collect streamed result ───────────────────────────────────
+// ─── Structured task prompt ───────────────────────────────────────────────────
+
+function buildTaskPrompt(task: { name: string; description: string; websiteUrl?: string | null }): string {
+  const site = task.websiteUrl ? `\nWebsite to check: ${task.websiteUrl}` : ''
+  return (
+    `You have been given a scheduled task to execute: "${task.name}"${site}\n\n` +
+    `Task instructions: ${task.description}\n\n` +
+    `Think through this step by step, use your tools (web search, browse) to gather ` +
+    `up-to-date information, then provide a structured report in exactly this format:\n\n` +
+    `## Summary\n[2-3 sentence overview of what you found]\n\n` +
+    `## Key Findings\n[Bullet points of the most important findings]\n\n` +
+    `## Action Items\n[Specific things that need attention or follow-up, or "None" if all is well]\n\n` +
+    `## Alerts\n[Anything urgent or requiring immediate attention, or "None"]`
+  )
+}
+
+// ─── Stream agent response ────────────────────────────────────────────────────
 
 async function callAgent(agent: any, message: string): Promise<string> {
   let result = ''
@@ -44,7 +59,7 @@ async function callAgent(agent: any, message: string): Promise<string> {
   } catch (err) {
     result = `Error: ${(err as Error).message}`
   }
-  return result
+  return result.trim()
 }
 
 // ─── Run a single task ────────────────────────────────────────────────────────
@@ -57,15 +72,22 @@ export async function runTask(taskId: string): Promise<void> {
 
   if (!task || !task.agent) return
 
-  const result = await callAgent(task.agent, task.description)
+  const prompt = buildTaskPrompt(task)
+  const result = await callAgent(task.agent, prompt)
+  const status = result.startsWith('Error:') ? 'failed' : 'success'
 
-  await prisma.scheduledTask.update({
-    where: { id: taskId },
-    data: { lastRunAt: new Date(), lastRunResult: result.slice(0, 2000) },
-  }).catch(() => {})
+  await Promise.all([
+    prisma.taskResult.create({
+      data: { taskId, status, result: result.slice(0, 10000) },
+    }),
+    prisma.scheduledTask.update({
+      where: { id: taskId },
+      data: { lastRunAt: new Date(), lastRunResult: result.slice(0, 2000) },
+    }),
+  ]).catch(console.error)
 }
 
-// ─── Register / unregister a cron job ────────────────────────────────────────
+// ─── Register / unregister cron job ──────────────────────────────────────────
 
 export function syncJob(task: { id: string; active: boolean; cronExpr: string }): void {
   jobs.get(task.id)?.stop()
@@ -74,7 +96,7 @@ export function syncJob(task: { id: string; active: boolean; cronExpr: string })
   jobs.set(task.id, cron.schedule(task.cronExpr, () => runTask(task.id)))
 }
 
-// ─── Load all active tasks on startup ────────────────────────────────────────
+// ─── Boot: load all active tasks ─────────────────────────────────────────────
 
 export async function loadActiveTasks(): Promise<void> {
   try {

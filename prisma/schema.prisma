@@ -102,10 +102,20 @@ model ScheduledTask {
   description   String
   websiteUrl    String?
   cronExpr      String
-  active        Boolean   @default(true)
+  active        Boolean      @default(true)
   lastRunAt     DateTime?
   lastRunResult String?
-  createdAt     DateTime  @default(now())
+  createdAt     DateTime     @default(now())
+  results       TaskResult[]
+}
+
+model TaskResult {
+  id      String        @id @default(cuid())
+  taskId  String
+  task    ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  runAt   DateTime      @default(now())
+  status  String
+  result  String
 }
 
 model BrowseActivity {

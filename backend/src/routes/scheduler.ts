@@ -64,6 +64,21 @@ schedulerRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
   }
 })
 
+// GET /api/scheduler/:id/results — task run history
+schedulerRouter.get('/:id/results', async (req: Request, res: Response) => {
+  try {
+    const results = await prisma.taskResult.findMany({
+      where: { taskId: req.params.id },
+      orderBy: { runAt: 'desc' },
+      take: 20,
+    })
+    res.json(results)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // POST /api/scheduler/:id/run — run now
 schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
