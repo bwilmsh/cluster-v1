@@ -69,6 +69,73 @@ automationsRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
   }
 })
 
+// POST /api/automations/:id/preflight — check requirements before running
+automationsRouter.post('/:id/preflight', async (req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const automation = await prisma.automation.findUnique({
+      where: { id: req.params.id },
+      include: { agent: true },
+    })
+    if (!automation || !automation.agent) return res.status(404).json({ error: 'Not found' })
+
+    // Get user's connected integrations
+    const integrations = await prisma.integration.findMany({
+      where: { userId: user.id },
+      select: { provider: true, accountEmail: true },
+    })
+    const connected = integrations.map((i) => i.provider)
+
+    // Call Python for goal analysis
+    const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+    let analysis: any = {
+      requirements: [],
+      web_access: true,
+      will_send_emails: false,
+      will_modify_data: false,
+      estimated_steps: 5,
+      notes: 'Pre-flight analysis unavailable — you can still run manually.',
+    }
+
+    try {
+      const pythonRes = await fetch(`${pythonUrl}/preflight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: automation.goal,
+          agent_name: automation.agent.name,
+          agent_id: automation.agent.id,
+          connected_integrations: connected,
+        }),
+      })
+      if (pythonRes.ok) analysis = await pythonRes.json()
+    } catch {
+      // Python down — return safe defaults so the UI still works
+    }
+
+    // Cross-check each requirement against what the user has connected
+    const requirements = (analysis.requirements ?? []).map((r: any) => ({
+      ...r,
+      connected: connected.includes(r.name),
+    }))
+
+    const blockers = requirements.filter((r: any) => r.required && !r.connected)
+    const warnings = requirements.filter((r: any) => !r.required && !r.connected)
+
+    res.json({
+      ...analysis,
+      requirements,
+      connected_integrations: connected,
+      has_blockers: blockers.length > 0,
+      blockers,
+      warnings,
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // POST /api/automations/:id/run — run now (responds immediately)
 automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {

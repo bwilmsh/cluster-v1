@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { api, Agent, Automation, AutomationRun, AutomationStep } from '@/lib/api'
+import { api, Agent, Automation, AutomationRun, AutomationStep, PreflightResult, PreflightRequirement } from '@/lib/api'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -144,6 +144,209 @@ function StepsView({ steps }: { steps: AutomationStep[] }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Pre-flight panel ─────────────────────────────────────────────────────────
+
+const INTEGRATION_LABELS: Record<string, string> = {
+  google: 'Google (Gmail / Sheets / Calendar)',
+  slack: 'Slack',
+  notion: 'Notion',
+  email: 'Email (SMTP)',
+}
+
+function RequirementRow({ req }: { req: PreflightRequirement }) {
+  const ok = req.connected
+  const label = req.label || INTEGRATION_LABELS[req.name] || req.name
+
+  return (
+    <div className="flex items-start gap-3 py-3 border-b border-white/6 last:border-0">
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+        ok ? 'bg-emerald-500/20' : req.required ? 'bg-rose-500/20' : 'bg-amber-500/15'
+      }`}>
+        {ok ? (
+          <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        ) : req.required ? (
+          <svg className="w-3 h-3 text-rose-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg className="w-3 h-3 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className={`text-sm font-medium ${ok ? 'text-white/80' : req.required ? 'text-rose-300' : 'text-amber-300'}`}>
+            {label}
+          </p>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+            req.required ? 'bg-white/8 text-white/40' : 'bg-white/5 text-white/30'
+          }`}>
+            {req.required ? 'required' : 'optional'}
+          </span>
+          {!ok && (
+            <a href="/integrations" className="text-[11px] text-accent hover:text-accent-hover underline underline-offset-2 transition-colors">
+              Connect →
+            </a>
+          )}
+        </div>
+        <p className="text-xs text-white/40 mt-0.5">{req.reason}</p>
+        {!ok && req.workaround && (
+          <p className="text-xs text-white/25 mt-0.5 italic">Without it: {req.workaround}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PreflightPanel({ automation, onConfirm, onCancel }: {
+  automation: Automation
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const [loading, setLoading] = useState(true)
+  const [result, setResult] = useState<PreflightResult | null>(null)
+  const [confirming, setConfirming] = useState(false)
+
+  useEffect(() => {
+    api.automations.preflight(automation.id)
+      .then(setResult)
+      .catch(() => setResult({
+        requirements: [], web_access: true, will_send_emails: false, will_modify_data: false,
+        estimated_steps: 5, notes: 'Could not analyse requirements.',
+        has_blockers: false, blockers: [], warnings: [], connected_integrations: [],
+      }))
+      .finally(() => setLoading(false))
+  }, [automation.id])
+
+  function handleConfirm() {
+    setConfirming(true)
+    onConfirm()
+  }
+
+  const hasBlockers = result?.has_blockers ?? false
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md bg-[#111] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-white/8 shrink-0">
+          <div className="flex items-center gap-2.5 mb-0.5">
+            <svg className="w-4 h-4 text-accent shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            <p className="text-sm font-semibold text-white">Pre-flight Check</p>
+          </div>
+          <p className="text-xs text-white/35 ml-6.5 truncate">{automation.name}</p>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 max-h-[60vh]">
+          {loading ? (
+            <div className="flex items-center gap-2.5 py-6 justify-center">
+              <svg className="w-4 h-4 animate-spin text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="text-sm text-white/40">Analysing requirements…</span>
+            </div>
+          ) : result ? (
+            <div className="space-y-4">
+
+              {/* Status banner */}
+              <div className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl ${
+                hasBlockers ? 'bg-rose-500/12 border border-rose-500/25' : 'bg-emerald-500/10 border border-emerald-500/20'
+              }`}>
+                {hasBlockers ? (
+                  <>
+                    <svg className="w-4 h-4 text-rose-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    <p className="text-xs text-rose-300">
+                      {result.blockers.length} required {result.blockers.length === 1 ? 'integration is' : 'integrations are'} missing
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 text-emerald-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <p className="text-xs text-emerald-300">Ready to run</p>
+                  </>
+                )}
+              </div>
+
+              {/* Agent's notes */}
+              {result.notes && (
+                <p className="text-xs text-white/45 leading-relaxed">{result.notes}</p>
+              )}
+
+              {/* Requirements */}
+              {result.requirements.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-white/30 uppercase tracking-widest mb-1">Integrations</p>
+                  <div>
+                    {result.requirements.map((r, i) => <RequirementRow key={i} req={r} />)}
+                  </div>
+                </div>
+              )}
+
+              {/* Run info */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-white/4 rounded-lg px-3 py-2">
+                  <p className="text-[10px] text-white/30 mb-0.5">Est. steps</p>
+                  <p className="text-sm font-medium text-white/70">{result.estimated_steps}</p>
+                </div>
+                <div className="bg-white/4 rounded-lg px-3 py-2">
+                  <p className="text-[10px] text-white/30 mb-0.5">Web search</p>
+                  <p className={`text-sm font-medium ${result.web_access ? 'text-emerald-400' : 'text-white/40'}`}>
+                    {result.web_access ? 'Yes' : 'No'}
+                  </p>
+                </div>
+                {result.will_send_emails && (
+                  <div className="bg-amber-500/10 rounded-lg px-3 py-2 col-span-2">
+                    <p className="text-xs text-amber-300">⚠ This run will send emails</p>
+                  </div>
+                )}
+                {result.will_modify_data && (
+                  <div className="bg-amber-500/10 rounded-lg px-3 py-2 col-span-2">
+                    <p className="text-xs text-amber-300">⚠ This run will write or modify data</p>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          ) : null}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-white/8 flex gap-2.5 shrink-0">
+          <button onClick={onCancel} disabled={confirming}
+            className="flex-1 py-2 rounded-lg border border-white/10 text-white/50 hover:text-white/80 text-sm transition-colors disabled:opacity-40">
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={loading || hasBlockers || confirming}
+            className="flex-1 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            {confirming ? (
+              <>
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Starting…
+              </>
+            ) : hasBlockers ? 'Missing requirements' : 'Confirm & Run'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -338,6 +541,9 @@ export default function AutomationsPage() {
   const [runStates, setRunStates] = useState<Record<string, 'idle' | 'running'>>({})
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
+  // Pre-flight modal state
+  const [preflightAutomation, setPreflightAutomation] = useState<Automation | null>(null)
+
   function refreshAutomations() {
     api.automations.list().then(({ automations: a, runsToday: r, dailyLimit: l }) => {
       setAutomations(a)
@@ -372,13 +578,19 @@ export default function AutomationsPage() {
     setAutomations((prev) => prev.map((x) => (x.id === a.id ? updated : x)))
   }
 
-  async function handleRun(a: Automation) {
-    setRunStates((prev) => ({ ...prev, [a.id]: 'running' }))
+  // Step 1: "Run Now" clicked — show pre-flight modal first
+  function handleRunClick(a: Automation) {
     setSelectedId(a.id)
+    setPreflightAutomation(a)
+  }
+
+  // Step 2: Pre-flight confirmed — actually fire the run
+  async function handleRunConfirmed(a: Automation) {
+    setPreflightAutomation(null)
+    setRunStates((prev) => ({ ...prev, [a.id]: 'running' }))
 
     const result = await api.automations.run(a.id).catch(() => ({ error: 'Request failed' } as { error: string; dailyLimit?: number; runsToday?: number }))
 
-    // Handle daily limit exceeded
     if (result.error) {
       setRunStates((prev) => ({ ...prev, [a.id]: 'idle' }))
       alert(result.error)
@@ -386,7 +598,6 @@ export default function AutomationsPage() {
       return
     }
 
-    // Update run count optimistically
     if ('runsToday' in result && typeof result.runsToday === 'number') setRunsToday(result.runsToday)
 
     // Poll until the new run completes
@@ -399,7 +610,7 @@ export default function AutomationsPage() {
         const newRun = latest.find((r) => !baseline.includes(r.id))
         const targetRun = newRun ?? latest[0]
 
-        if (selectedId === a.id || a.id === selectedId) {
+        if (selectedId === a.id) {
           setRuns(latest)
           if (targetRun) setSelectedRun(targetRun)
         }
@@ -432,6 +643,14 @@ export default function AutomationsPage() {
   const selected = automations.find((a) => a.id === selectedId) ?? null
 
   return (
+    <>
+    {preflightAutomation && (
+      <PreflightPanel
+        automation={preflightAutomation}
+        onConfirm={() => handleRunConfirmed(preflightAutomation)}
+        onCancel={() => setPreflightAutomation(null)}
+      />
+    )}
     <div className="h-full flex overflow-hidden">
 
       {/* ── Left panel: automation list ─────────────────────────── */}
@@ -520,7 +739,7 @@ export default function AutomationsPage() {
                     <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Toggle on={a.active} onChange={() => handleToggle(a)} />
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleRun(a) }}
+                        onClick={(e) => { e.stopPropagation(); handleRunClick(a) }}
                         disabled={isRunning}
                         className="w-6 h-6 flex items-center justify-center rounded text-white/30 hover:text-white/70 disabled:opacity-30 transition-colors"
                         title="Run now"
@@ -581,7 +800,7 @@ export default function AutomationsPage() {
                   <div className="px-3 py-6 text-center">
                     <p className="text-[11px] text-white/25 mb-3">No runs yet</p>
                     <button
-                      onClick={() => handleRun(selected)}
+                      onClick={() => handleRunClick(selected)}
                       disabled={runStates[selected.id] === 'running'}
                       className="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors disabled:opacity-40"
                     >
@@ -593,7 +812,7 @@ export default function AutomationsPage() {
                     {/* Run now button at top */}
                     <div className="px-3 py-2 border-b border-white/5">
                       <button
-                        onClick={() => handleRun(selected)}
+                        onClick={() => handleRunClick(selected)}
                         disabled={runStates[selected.id] === 'running'}
                         className="w-full py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent text-xs font-medium transition-colors disabled:opacity-40"
                       >
@@ -641,5 +860,6 @@ export default function AutomationsPage() {
         )}
       </div>
     </div>
+    </>
   )
 }

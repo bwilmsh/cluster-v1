@@ -101,6 +101,13 @@ class ClusterChatRequest(BaseModel):
     workspace_context: str = ""
 
 
+class PreflightRequest(BaseModel):
+    goal: str
+    agent_name: str
+    agent_id: str = ""
+    connected_integrations: list[str] = []
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -294,6 +301,74 @@ def _blocks_to_dict(content) -> list[dict]:
             elif hasattr(block, "__dict__"):
                 result.append({"type": block.type, **{k: v for k, v in block.__dict__.items() if not k.startswith("_")}})
     return result
+
+
+@app.post("/preflight")
+def preflight_check(req: PreflightRequest):
+    """
+    Analyse a goal and return a structured requirements report.
+    Fast — one LLM call, no tools, no loop.
+    """
+    client = get_client()
+    connected_str = ", ".join(req.connected_integrations) if req.connected_integrations else "none"
+
+    prompt = f"""Analyse this automation goal and return a JSON requirements report. Be precise — only list what is genuinely needed.
+
+Agent: {req.agent_name}
+Goal: {req.goal}
+Currently connected integrations: {connected_str}
+
+Return ONLY a JSON object — no markdown fences, no explanation:
+{{
+  "requirements": [
+    {{
+      "type": "integration",
+      "name": "google|slack|notion",
+      "label": "Google (Gmail / Sheets / Calendar)",
+      "required": true,
+      "reason": "One sentence: why this specific integration is needed for this goal",
+      "workaround": "What the agent will do without it, or null if it completely blocks the task"
+    }}
+  ],
+  "web_access": true,
+  "will_send_emails": false,
+  "will_modify_data": false,
+  "estimated_steps": 4,
+  "notes": "One sentence: what this automation will actually do when it runs"
+}}
+
+Rules:
+- Only include integrations genuinely required for THIS specific goal
+- required=true means the task is completely blocked without it
+- required=false means the agent can work around the missing item
+- estimated_steps: 2-8 (the hard cap is 8)
+- web_access: true whenever the goal needs current or live information
+- will_send_emails: true only if the goal explicitly requires sending emails
+- will_modify_data: true if the agent will write, update, or delete anything
+- If the goal only needs web research, return an empty requirements array"""
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in response.content if hasattr(b, "text"))
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(text[start:end])
+    except Exception as e:
+        pass  # Fall through to safe default
+
+    return {
+        "requirements": [],
+        "web_access": True,
+        "will_send_emails": False,
+        "will_modify_data": False,
+        "estimated_steps": 5,
+        "notes": "Could not analyse requirements — automation will attempt to run.",
+    }
 
 
 @app.post("/automate")

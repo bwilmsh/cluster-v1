@@ -213,6 +213,9 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
+    preflight: (id: string): Promise<PreflightResult> =>
+      fetch(`${BASE}/automations/${id}/preflight`, { method: 'POST' }).then((r) => r.json()),
+
     run: (id: string): Promise<{ message?: string; error?: string; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
       fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
@@ -255,6 +258,29 @@ export interface Automation {
   lastRunAt: string | null
   lastRunStatus: string | null
   createdAt: string
+}
+
+export interface PreflightRequirement {
+  type: 'integration'
+  name: string
+  label: string
+  required: boolean
+  reason: string
+  workaround: string | null
+  connected: boolean
+}
+
+export interface PreflightResult {
+  requirements: PreflightRequirement[]
+  web_access: boolean
+  will_send_emails: boolean
+  will_modify_data: boolean
+  estimated_steps: number
+  notes: string
+  has_blockers: boolean
+  blockers: PreflightRequirement[]
+  warnings: PreflightRequirement[]
+  connected_integrations: string[]
 }
 
 export interface AutomationStep {
