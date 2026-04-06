@@ -314,27 +314,34 @@ def run_automation(req: AutomateRequest):
         integrations=enriched,
     )
 
+    # Tight automation prompt — no padding, agent knows to be concise
     system_prompt = (
         base_prompt + "\n\n"
-        "AUTOMATION MODE: You are executing a scheduled task autonomously.\n"
-        "IMPORTANT: Do NOT ask questions or wait for input. Execute the goal using your tools.\n"
-        "Think step by step. Use web search and browse tools to gather current information.\n\n"
-        "When done, your final message MUST follow this exact format:\n\n"
-        "## Summary\n[2-3 sentence overview]\n\n"
-        "## Key Findings\n[bullet points]\n\n"
-        "## Action Items\n[specific next steps, or 'None']\n\n"
-        "## Alerts\n[anything urgent, or 'None']"
+        "AUTOMATION MODE — execute the goal autonomously using tools. No questions.\n"
+        "Be efficient: search once, read the most relevant result, write a concise report.\n"
+        "Final report must use bullet points, not paragraphs. Keep each section to 3-5 bullets max.\n\n"
+        "Final report format (required):\n"
+        "## Summary\n## Key Findings\n## Action Items\n## Alerts"
     )
 
-    messages: list[dict] = [{"role": "user", "content": f"Execute this automation goal: {req.goal}"}]
-    steps: list[dict] = []
+    MAX_STEPS = 8          # hard cap on tool calls
+    MAX_TOKENS = 2000      # max tokens per step response
+    CONTEXT_STEPS = 3      # only keep last N step exchanges in messages
 
-    for _ in range(15):
+    messages: list[dict] = [{"role": "user", "content": f"Goal: {req.goal}"}]
+    steps: list[dict] = []
+    # Track message pairs (assistant + tool_results) separately so we can trim context
+    turn_pairs: list[list[dict]] = []
+
+    for _ in range(MAX_STEPS):
+        # Build trimmed context: initial user message + last CONTEXT_STEPS turn pairs
+        trimmed_messages = messages[:1] + [m for pair in turn_pairs[-CONTEXT_STEPS:] for m in pair]
+
         response = client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=MAX_TOKENS,
             system=system_prompt,
-            messages=messages,
+            messages=trimmed_messages,
             tools=tools if tools else anthropic.NOT_GIVEN,
         )
 
@@ -355,37 +362,36 @@ def run_automation(req: AutomateRequest):
                     output = f"Tool error: {e}"
                 steps.append({
                     "tool": block.name,
-                    "input": {k: str(v)[:300] for k, v in dict(block.input).items()},
-                    "output": output[:500],
+                    "input": {k: str(v)[:200] for k, v in dict(block.input).items()},
+                    "output": output[:400],
                     "status": "error" if output.startswith("Tool error") else "success",
                 })
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": output[:3000],
+                    "content": output[:2000],
                 })
             elif block.type == "tool_use" and block.name == "web_search":
-                # Native tool — record it as a step for visibility but don't execute
                 query = dict(block.input).get("query", "")
                 steps.append({
                     "tool": "web_search",
-                    "input": {"query": query[:300]},
+                    "input": {"query": query[:200]},
                     "output": "Search handled by Anthropic",
                     "status": "success",
                 })
 
-        # Use plain dicts (not SDK objects) so the SDK doesn't choke on re-serialization
-        messages = messages + [
+        turn_pairs.append([
             {"role": "assistant", "content": assistant_content},
             {"role": "user", "content": tool_results},
-        ]
+        ])
 
     # Force final answer after step limit
+    trimmed_messages = messages[:1] + [m for pair in turn_pairs[-CONTEXT_STEPS:] for m in pair]
     final_response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=MAX_TOKENS,
         system=system_prompt,
-        messages=messages + [{"role": "user", "content": "Step limit reached. Write your final report now using the information gathered."}],
+        messages=trimmed_messages + [{"role": "user", "content": "Step limit reached. Write your final report now using only what you've gathered."}],
     )
     final_text = "".join(
         block.text for block in final_response.content if hasattr(block, "text")

@@ -1,22 +1,25 @@
 import { Router, Request, Response } from 'express'
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
-import { runAutomation, syncAutomation, loadAutomations } from '../services/automationRunner'
+import { runAutomation, syncAutomation, loadAutomations, todayRunCount, DAILY_RUN_LIMIT } from '../services/automationRunner'
 
 export { loadAutomations }
 
 export const automationsRouter = Router()
 
-// GET /api/automations — list all automations with agent
+// GET /api/automations — list all automations with agent + daily usage
 automationsRouter.get('/', async (_req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const automations = await prisma.automation.findMany({
-      where: { userId: user.id },
-      include: { agent: true },
-      orderBy: { createdAt: 'desc' },
-    })
-    res.json(automations)
+    const [automations, runsToday] = await Promise.all([
+      prisma.automation.findMany({
+        where: { userId: user.id },
+        include: { agent: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      todayRunCount(user.id),
+    ])
+    res.json({ automations, runsToday, dailyLimit: DAILY_RUN_LIMIT })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
@@ -69,12 +72,20 @@ automationsRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
 // POST /api/automations/:id/run — run now (responds immediately)
 automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
-    const automation = await prisma.automation.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, name: true },
-    })
+    const user = await getDefaultUser()
+    const [automation, runsToday] = await Promise.all([
+      prisma.automation.findUnique({ where: { id: req.params.id }, select: { id: true, name: true } }),
+      todayRunCount(user.id),
+    ])
     if (!automation) return res.status(404).json({ error: 'Not found' })
-    res.json({ message: 'Automation started', automationId: automation.id })
+    if (runsToday >= DAILY_RUN_LIMIT) {
+      return res.status(429).json({
+        error: `Daily run limit reached (${DAILY_RUN_LIMIT}/day). Resets at midnight UTC.`,
+        runsToday,
+        dailyLimit: DAILY_RUN_LIMIT,
+      })
+    }
+    res.json({ message: 'Automation started', automationId: automation.id, runsToday: runsToday + 1, dailyLimit: DAILY_RUN_LIMIT })
     runAutomation(automation.id).catch(console.error)
   } catch (err) {
     console.error(err)

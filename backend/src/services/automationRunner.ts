@@ -4,10 +4,24 @@ import { getUserIntegrationTokens } from '../routes/integrations'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
+export const DAILY_RUN_LIMIT = 3
+
 // Active cron jobs keyed by automation id
 const jobs = new Map<string, cron.ScheduledTask>()
 
 // ─── Run an automation ────────────────────────────────────────────────────────
+
+/** Count how many runs a user has triggered today (UTC). */
+export async function todayRunCount(userId: string): Promise<number> {
+  const startOfDay = new Date()
+  startOfDay.setUTCHours(0, 0, 0, 0)
+  return prisma.automationRun.count({
+    where: {
+      automation: { userId },
+      startedAt: { gte: startOfDay },
+    },
+  })
+}
 
 export async function runAutomation(automationId: string): Promise<void> {
   const automation = await prisma.automation.findUnique({
@@ -16,6 +30,13 @@ export async function runAutomation(automationId: string): Promise<void> {
   }).catch(() => null)
 
   if (!automation || !automation.agent) return
+
+  // Enforce daily run limit
+  const runsToday = await todayRunCount(automation.userId)
+  if (runsToday >= DAILY_RUN_LIMIT) {
+    console.warn(`Daily run limit (${DAILY_RUN_LIMIT}) reached for user ${automation.userId} — skipping automation ${automationId}`)
+    return
+  }
 
   // Create a run record with status "running"
   const run = await prisma.automationRun.create({

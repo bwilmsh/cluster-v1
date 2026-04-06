@@ -193,8 +193,12 @@ export const api = {
   },
 
   automations: {
-    list: (): Promise<Automation[]> =>
-      fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => safeArray<Automation>(d)),
+    list: (): Promise<AutomationListResponse> =>
+      fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => ({
+        automations: safeArray<Automation>(d?.automations ?? d),
+        runsToday: typeof d?.runsToday === 'number' ? d.runsToday : 0,
+        dailyLimit: typeof d?.dailyLimit === 'number' ? d.dailyLimit : 3,
+      })),
 
     create: (data: { agentId: string; name: string; goal: string; triggerType: string; cronExpr?: string }): Promise<Automation> =>
       fetch(`${BASE}/automations`, {
@@ -209,7 +213,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    run: (id: string): Promise<{ message: string; automationId: string }> =>
+    run: (id: string): Promise<{ message?: string; error?: string; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
       fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
     runs: (id: string): Promise<AutomationRun[]> =>
@@ -231,6 +235,12 @@ export interface WebCredential {
   siteUrl: string
   username: string
   createdAt: string
+}
+
+export interface AutomationListResponse {
+  automations: Automation[]
+  runsToday: number
+  dailyLimit: number
 }
 
 export interface Automation {

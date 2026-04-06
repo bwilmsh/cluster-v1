@@ -288,6 +288,17 @@ function CreateForm({ agents, onCreated, onCancel }: {
           )}
         </div>
 
+        {/* Cost estimate */}
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-white/4 border border-white/8">
+          <svg className="w-3.5 h-3.5 text-white/30 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+          <p className="text-[11px] text-white/35 leading-relaxed">
+            Each run uses approximately <span className="text-white/55">4–8 API calls</span> and takes 30–90 seconds.
+            Limit: <span className="text-white/55">3 runs/day</span>.
+          </p>
+        </div>
+
         {error && <p className="text-xs text-rose-400">{error}</p>}
 
         <div className="flex gap-2 pt-1">
@@ -312,6 +323,8 @@ export default function AutomationsPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [runsToday, setRunsToday] = useState(0)
+  const [dailyLimit, setDailyLimit] = useState(3)
 
   // Left panel: selected automation
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -325,9 +338,22 @@ export default function AutomationsPage() {
   const [runStates, setRunStates] = useState<Record<string, 'idle' | 'running'>>({})
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
+  function refreshAutomations() {
+    api.automations.list().then(({ automations: a, runsToday: r, dailyLimit: l }) => {
+      setAutomations(a)
+      setRunsToday(r)
+      setDailyLimit(l)
+    }).catch(() => {})
+  }
+
   useEffect(() => {
     Promise.all([api.automations.list(), api.agents.list()])
-      .then(([a, ag]) => { setAutomations(a); setAgents(ag) })
+      .then(([{ automations: a, runsToday: r, dailyLimit: l }, ag]) => {
+        setAutomations(a)
+        setRunsToday(r)
+        setDailyLimit(l)
+        setAgents(ag)
+      })
       .finally(() => setLoading(false))
     return () => Object.values(pollTimers.current).forEach(clearInterval)
   }, [])
@@ -348,10 +374,20 @@ export default function AutomationsPage() {
 
   async function handleRun(a: Automation) {
     setRunStates((prev) => ({ ...prev, [a.id]: 'running' }))
-    // Select this automation so results appear in the right panel
     setSelectedId(a.id)
 
-    await api.automations.run(a.id).catch(console.error)
+    const result = await api.automations.run(a.id).catch(() => ({ error: 'Request failed' } as { error: string; dailyLimit?: number; runsToday?: number }))
+
+    // Handle daily limit exceeded
+    if (result.error) {
+      setRunStates((prev) => ({ ...prev, [a.id]: 'idle' }))
+      alert(result.error)
+      if (typeof result.dailyLimit === 'number') setRunsToday(result.dailyLimit)
+      return
+    }
+
+    // Update run count optimistically
+    if ('runsToday' in result && typeof result.runsToday === 'number') setRunsToday(result.runsToday)
 
     // Poll until the new run completes
     const baseline = runs.filter((r) => r.automationId === a.id).map((r) => r.id)
@@ -363,7 +399,6 @@ export default function AutomationsPage() {
         const newRun = latest.find((r) => !baseline.includes(r.id))
         const targetRun = newRun ?? latest[0]
 
-        // Refresh runs panel if we're still viewing this automation
         if (selectedId === a.id || a.id === selectedId) {
           setRuns(latest)
           if (targetRun) setSelectedRun(targetRun)
@@ -373,7 +408,7 @@ export default function AutomationsPage() {
           clearInterval(pollTimers.current[a.id])
           delete pollTimers.current[a.id]
           setRunStates((prev) => ({ ...prev, [a.id]: 'idle' }))
-          api.automations.list().then(setAutomations).catch(() => {})
+          refreshAutomations()
           return
         }
       } catch {}
@@ -391,6 +426,7 @@ export default function AutomationsPage() {
     await api.automations.delete(id)
     setAutomations((prev) => prev.filter((a) => a.id !== id))
     if (selectedId === id) { setSelectedId(null); setRuns([]) }
+    refreshAutomations()
   }
 
   const selected = automations.find((a) => a.id === selectedId) ?? null
@@ -409,6 +445,30 @@ export default function AutomationsPage() {
               + New
             </button>
           </div>
+
+          {/* Daily limit indicator */}
+          {(() => {
+            const pct = Math.min(runsToday / dailyLimit, 1)
+            const atLimit = runsToday >= dailyLimit
+            const nearLimit = runsToday >= dailyLimit - 1 && !atLimit
+            if (runsToday === 0) return null
+            return (
+              <div className={`mb-3 px-3 py-2 rounded-lg text-[11px] ${
+                atLimit ? 'bg-rose-500/15 text-rose-400' : nearLimit ? 'bg-amber-500/15 text-amber-400' : 'bg-white/5 text-white/40'
+              }`}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span>{atLimit ? 'Daily limit reached' : nearLimit ? 'Approaching daily limit' : 'Daily runs'}</span>
+                  <span className="font-medium">{runsToday}/{dailyLimit}</span>
+                </div>
+                <div className="w-full h-1 rounded-full bg-white/10">
+                  <div className={`h-1 rounded-full transition-all ${atLimit ? 'bg-rose-400' : nearLimit ? 'bg-amber-400' : 'bg-accent'}`}
+                    style={{ width: `${pct * 100}%` }} />
+                </div>
+                {atLimit && <p className="mt-1 text-[10px] opacity-70">Resets at midnight UTC</p>}
+              </div>
+            )
+          })()}
+
           {showForm && (
             <CreateForm
               agents={agents}
