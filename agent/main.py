@@ -108,6 +108,16 @@ class PreflightRequest(BaseModel):
     connected_integrations: list[str] = []
 
 
+class AutomateRequest(BaseModel):
+    agent_name: str
+    agent_id: str = ""
+    setup_answers: dict[str, Any] = {}
+    memory: str = ""
+    goal: str
+    integrations: dict[str, Any] = {}
+    resume_state: dict | None = None  # set when resuming after a human answer
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -598,6 +608,175 @@ async def cluster_chat(req: ClusterChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class ExecuteBrowseRequest(BaseModel):
+    url: str
+    instructions: str
+
+
+class SummariseRequest(BaseModel):
+    format: str
+    include: list[str] = []
+    data: list[str] = []
+    variables: dict[str, str] = {}
+    agent_name: str = ""
+    template_name: str = ""
+    action: str = "summarise"
+
+
+class BuildAutomationRequest(BaseModel):
+    description: str
+
+
+class RecoverStepRequest(BaseModel):
+    step_type: str
+    step_action: str
+    error: str
+    collected_data: list[str] = []
+    agent_name: str = ""
+
+
+@app.post("/execute-browse")
+def execute_browse(req: ExecuteBrowseRequest):
+    """Execute a single browse step using Playwright."""
+    from tools import execute_tool
+    try:
+        result = execute_tool("browse_website", {"url": req.url, "instructions": req.instructions}, {})
+        return {"result": result}
+    except Exception as e:
+        return {"result": f"Browse failed: {e}", "error": str(e)}
+
+
+@app.post("/summarise")
+def summarise(req: SummariseRequest):
+    """Use AI to compile collected data into a formatted summary."""
+    client = get_client()
+    data_text = "\n\n---\n\n".join(req.data) if req.data else "(no data collected)"
+    include_list = ", ".join(req.include) if req.include else "all relevant metrics"
+
+    prompt = f"""You are {req.agent_name or 'an AI assistant'} completing an automation task: "{req.template_name}".
+
+The automation has collected the following data:
+
+{data_text}
+
+Format: {req.format}
+Include in your summary: {include_list}
+
+Write a clean, well-formatted summary using markdown. Use headers, bullet points, and bold text for key metrics.
+Be concise — this will be delivered directly to the user.
+Do not include any preamble or explanation. Start directly with the content."""
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        result = "".join(b.text for b in response.content if hasattr(b, "text"))
+        return {"result": result}
+    except Exception as e:
+        return {"result": f"Summary generation failed: {e}", "error": str(e)}
+
+
+@app.post("/build-automation")
+def build_automation(req: BuildAutomationRequest):
+    """Convert a plain English description into a structured automation step definition."""
+    client = get_client()
+
+    prompt = f"""Convert this automation description into a structured JSON step definition.
+
+Description: {req.description}
+
+Return ONLY a JSON object with this structure:
+{{
+  "name": "Short automation name",
+  "description": "What this automation does",
+  "steps": [
+    {{
+      "id": 1,
+      "type": "browse|api|extract|report|send_email|write_sheet|post_slack|notify_chat|alert",
+      "action": "navigate|login|extract|summarise|list_emails|read_sheet|etc",
+      "url": "https://...",
+      "instructions": "What to do or extract",
+      "provider": "google|slack",
+      "endpoint": "gmail.users.messages.list|sheets.spreadsheets.values.get|etc",
+      "params": {{}}
+    }}
+  ],
+  "variables": [
+    {{
+      "key": "variable_key",
+      "label": "Human label",
+      "type": "select|text|number",
+      "options": [],
+      "default": "",
+      "required": false
+    }}
+  ],
+  "requires": ["google_oauth"],
+  "estimated_duration": "30-60 seconds",
+  "ai_recovery": true
+}}
+
+Step types to use:
+- browse: visit a website, log in, extract data
+- api: call Google/Slack APIs using OAuth
+- extract: process previous step's data
+- report: generate a formatted summary (always last before delivery)
+- send_email: send an email via Gmail
+- notify_chat: deliver result to agent chat (default delivery)
+
+Keep it to 3-6 steps. Be practical and specific."""
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in response.content if hasattr(b, "text"))
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(text[start:end])
+        return {"error": "Could not parse step definition"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/recover-step")
+def recover_step(req: RecoverStepRequest):
+    """AI attempts to recover from a failed automation step."""
+    client = get_client()
+    data_context = "\n".join(req.collected_data) if req.collected_data else "(none)"
+
+    prompt = f"""An automation step failed. Attempt to produce a useful result anyway.
+
+Agent: {req.agent_name}
+Failed step type: {req.step_type} / {req.step_action}
+Error: {req.error}
+
+Data collected before failure:
+{data_context}
+
+Your job: given what was collected before the failure, produce the best possible output for this step.
+If you can infer or estimate the data, do so clearly labeled as estimated.
+If recovery is impossible, return an empty string.
+
+Return only the recovered result text, no explanation."""
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        result = "".join(b.text for b in response.content if hasattr(b, "text"))
+        return {"result": result}
+    except Exception as e:
+        return {"result": ""}
 
 
 if __name__ == "__main__":

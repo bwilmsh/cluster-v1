@@ -1,0 +1,19 @@
+{
+  "id": "cross_platform_weekly_report",
+  "name": "Cross-Platform Weekly Report",
+  "description": "Combined weekly performance across TikTok, Instagram, and YouTube in one report",
+  "category": "analytics",
+  "icon": "chart",
+  "requires": ["tiktok_credentials", "instagram_credentials"],
+  "variables": [
+    { "key": "platforms", "label": "Platforms to include", "type": "select", "options": ["TikTok + Instagram", "TikTok + YouTube", "All platforms"], "default": "TikTok + Instagram" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "navigate", "url": "https://studio.tiktok.com/creator/analytics", "instructions": "Extract TikTok weekly analytics — views, likes, followers" },
+    { "id": 2, "type": "browse", "action": "navigate", "url": "https://www.instagram.com/dashboard/", "instructions": "Extract Instagram weekly analytics — reach, followers, impressions" },
+    { "id": 3, "type": "report", "action": "summarise", "format": "cross_platform_report", "include": ["platform_comparison", "total_reach", "best_performing_platform", "growth_trends"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "sheets", "slack"],
+  "estimated_duration": "90-120 seconds",
+  "ai_recovery": true
+}

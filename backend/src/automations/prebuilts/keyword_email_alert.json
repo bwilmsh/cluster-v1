@@ -1,0 +1,20 @@
+{
+  "id": "keyword_email_alert",
+  "name": "Keyword Email Alert",
+  "description": "Get alerted when emails matching specific keywords arrive — contracts, invoices, urgent requests",
+  "category": "alerts",
+  "icon": "bell",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "keywords", "label": "Alert keywords", "type": "text", "required": true, "placeholder": "invoice,contract,urgent,payment" },
+    { "key": "check_period", "label": "Check last", "type": "select", "options": ["1 hour", "6 hours", "24 hours"], "default": "6 hours" }
+  ],
+  "steps": [
+    { "id": 1, "type": "api", "action": "list_emails", "provider": "google", "endpoint": "gmail.users.messages.list", "params": { "maxResults": "50", "q": "is:unread ({{keywords}}) newer_than:1d" } },
+    { "id": 2, "type": "api", "action": "get_email_details", "provider": "google", "endpoint": "gmail.users.messages.get", "params": { "format": "metadata" } },
+    { "id": 3, "type": "alert", "action": "notify", "condition": "emails_found" }
+  ],
+  "delivery_options": ["chat", "email", "slack"],
+  "estimated_duration": "10-15 seconds",
+  "ai_recovery": false
+}

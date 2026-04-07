@@ -1,0 +1,19 @@
+{
+  "id": "youtube_weekly_summary",
+  "name": "YouTube Weekly Summary",
+  "description": "Weekly YouTube channel performance — views, watch time, subscribers, top videos",
+  "category": "social_media",
+  "icon": "youtube",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "time_period", "label": "Time Period", "type": "select", "options": ["Last 7 days", "Last 28 days", "Last 90 days"], "default": "Last 7 days" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "navigate", "url": "https://studio.youtube.com", "instructions": "Navigate to YouTube Studio" },
+    { "id": 2, "type": "browse", "action": "extract", "target": "channel_analytics", "instructions": "Extract total views, watch time hours, subscribers gained/lost, and top 5 performing videos this period" },
+    { "id": 3, "type": "report", "action": "summarise", "format": "analytics_summary", "include": ["views", "watch_time", "subscribers_gained", "top_videos", "revenue_estimate"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "45-60 seconds",
+  "ai_recovery": true
+}

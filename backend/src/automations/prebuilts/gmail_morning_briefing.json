@@ -1,0 +1,21 @@
+{
+  "id": "gmail_morning_briefing",
+  "name": "Gmail Morning Briefing",
+  "description": "A clean summary of your overnight emails — what needs action, what can wait",
+  "category": "email",
+  "icon": "gmail",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "max_emails", "label": "Emails to scan", "type": "select", "options": ["20", "50", "100"], "default": "50" },
+    { "key": "priority_keywords", "label": "Priority keywords (comma-separated)", "type": "text", "default": "urgent,invoice,contract,deadline", "placeholder": "urgent,invoice,deadline" }
+  ],
+  "steps": [
+    { "id": 1, "type": "api", "action": "list_emails", "provider": "google", "endpoint": "gmail.users.messages.list", "params": { "maxResults": "{{max_emails}}", "q": "is:unread newer_than:1d" } },
+    { "id": 2, "type": "api", "action": "get_email_details", "provider": "google", "endpoint": "gmail.users.messages.get", "params": { "format": "metadata" } },
+    { "id": 3, "type": "extract", "action": "process", "target": "email_summary", "source": "api_result" },
+    { "id": 4, "type": "report", "action": "summarise", "format": "email_briefing", "include": ["action_required", "fyi_only", "total_unread", "priority_senders"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "15-30 seconds",
+  "ai_recovery": false
+}

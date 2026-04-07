@@ -1,20 +1,50 @@
 import { Router, Request, Response } from 'express'
-import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
-import { runAutomation, syncAutomation, loadAutomations, todayRunCount, DAILY_RUN_LIMIT } from '../services/automationRunner'
+import { runAutomation, syncAutomation, loadAutomations, todayRunCount, DAILY_RUN_LIMIT } from '../automations/runner'
+import { loadAllTemplates, loadTemplate } from '../automations/templateLoader'
 
 export { loadAutomations }
 
 export const automationsRouter = Router()
 
-// GET /api/automations — list all automations with agent + daily usage
+// ─── Templates ────────────────────────────────────────────────────────────────
+
+// GET /api/automations/templates — list all approved templates
+automationsRouter.get('/templates', async (_req: Request, res: Response) => {
+  try {
+    const templates = await prisma.automationTemplate.findMany({
+      where: { isApproved: true },
+      orderBy: [{ isOfficial: 'desc' }, { name: 'asc' }],
+    })
+    res.json(templates)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/automations/templates/:id — single template with full definition
+automationsRouter.get('/templates/:id', async (req: Request, res: Response) => {
+  try {
+    const template = await prisma.automationTemplate.findUnique({ where: { id: req.params.id } })
+    if (!template) return res.status(404).json({ error: 'Not found' })
+    res.json(template)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// ─── My Automations ───────────────────────────────────────────────────────────
+
+// GET /api/automations — list user's automations
 automationsRouter.get('/', async (_req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
     const [automations, runsToday] = await Promise.all([
       prisma.automation.findMany({
         where: { userId: user.id },
-        include: { agent: true },
+        include: { agent: true, template: true },
         orderBy: { createdAt: 'desc' },
       }),
       todayRunCount(user.id),
@@ -26,22 +56,30 @@ automationsRouter.get('/', async (_req: Request, res: Response) => {
   }
 })
 
-// POST /api/automations — create automation
+// POST /api/automations — create automation from template
 automationsRouter.post('/', async (req: Request, res: Response) => {
   try {
-    const { agentId, name, goal, triggerType, cronExpr } = req.body
-    if (!agentId || !name || !goal) {
-      return res.status(400).json({ error: 'agentId, name, goal required' })
+    const { agentId, templateId, name, variables, schedule, deliveryType, deliveryTarget } = req.body
+    if (!agentId || !templateId) {
+      return res.status(400).json({ error: 'agentId and templateId required' })
     }
-    const type = triggerType ?? 'manual'
-    if (type === 'schedule') {
-      if (!cronExpr) return res.status(400).json({ error: 'cronExpr required for schedule trigger' })
-      if (!cron.validate(cronExpr)) return res.status(400).json({ error: 'Invalid cron expression' })
-    }
+
+    const template = await prisma.automationTemplate.findUnique({ where: { id: templateId } })
+    if (!template) return res.status(404).json({ error: 'Template not found' })
+
     const user = await getDefaultUser()
     const automation = await prisma.automation.create({
-      data: { userId: user.id, agentId, name, goal, triggerType: type, cronExpr: cronExpr ?? null },
-      include: { agent: true },
+      data: {
+        userId: user.id,
+        agentId,
+        templateId,
+        name: name || template.name,
+        variables: variables ?? {},
+        schedule: schedule ?? null,
+        deliveryType: deliveryType ?? 'chat',
+        deliveryTarget: deliveryTarget ?? null,
+      },
+      include: { agent: true, template: true },
     })
     syncAutomation(automation)
     res.status(201).json(automation)
@@ -59,7 +97,7 @@ automationsRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
     const automation = await prisma.automation.update({
       where: { id: req.params.id },
       data: { active: !existing.active },
-      include: { agent: true },
+      include: { agent: true, template: true },
     })
     syncAutomation(automation)
     res.json(automation)
@@ -69,74 +107,7 @@ automationsRouter.patch('/:id/toggle', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/automations/:id/preflight — check requirements before running
-automationsRouter.post('/:id/preflight', async (req: Request, res: Response) => {
-  try {
-    const user = await getDefaultUser()
-    const automation = await prisma.automation.findUnique({
-      where: { id: req.params.id },
-      include: { agent: true },
-    })
-    if (!automation || !automation.agent) return res.status(404).json({ error: 'Not found' })
-
-    // Get user's connected integrations
-    const integrations = await prisma.integration.findMany({
-      where: { userId: user.id },
-      select: { provider: true, accountEmail: true },
-    })
-    const connected = integrations.map((i) => i.provider)
-
-    // Call Python for goal analysis
-    const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
-    let analysis: any = {
-      requirements: [],
-      web_access: true,
-      will_send_emails: false,
-      will_modify_data: false,
-      estimated_steps: 5,
-      notes: 'Pre-flight analysis unavailable — you can still run manually.',
-    }
-
-    try {
-      const pythonRes = await fetch(`${pythonUrl}/preflight`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goal: automation.goal,
-          agent_name: automation.agent.name,
-          agent_id: automation.agent.id,
-          connected_integrations: connected,
-        }),
-      })
-      if (pythonRes.ok) analysis = await pythonRes.json()
-    } catch {
-      // Python down — return safe defaults so the UI still works
-    }
-
-    // Cross-check each requirement against what the user has connected
-    const requirements = (analysis.requirements ?? []).map((r: any) => ({
-      ...r,
-      connected: connected.includes(r.name),
-    }))
-
-    const blockers = requirements.filter((r: any) => r.required && !r.connected)
-    const warnings = requirements.filter((r: any) => !r.required && !r.connected)
-
-    res.json({
-      ...analysis,
-      requirements,
-      connected_integrations: connected,
-      has_blockers: blockers.length > 0,
-      blockers,
-      warnings,
-    })
-  } catch (err) {
-    console.error(err)
-    res.status(500).json({ error: 'Internal server error' })
-  }
-})
-
-// POST /api/automations/:id/run — run now (responds immediately)
+// POST /api/automations/:id/run — run now
 automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
@@ -178,8 +149,134 @@ automationsRouter.get('/:id/runs', async (req: Request, res: Response) => {
 // DELETE /api/automations/:id
 automationsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
-    syncAutomation({ id: req.params.id, active: false, triggerType: 'manual', cronExpr: null })
+    syncAutomation({ id: req.params.id, active: false, schedule: null })
     await prisma.automation.delete({ where: { id: req.params.id } })
+    res.status(204).send()
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// ─── Custom automation builder ────────────────────────────────────────────────
+
+// POST /api/automations/build — AI generates step definition from description
+automationsRouter.post('/build', async (req: Request, res: Response) => {
+  try {
+    const { description } = req.body
+    if (!description) return res.status(400).json({ error: 'description required' })
+
+    const pythonUrl = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+    const pythonRes = await fetch(`${pythonUrl}/build-automation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    })
+
+    if (!pythonRes.ok) {
+      return res.status(500).json({ error: 'Build service unavailable' })
+    }
+
+    const data = await pythonRes.json()
+    res.json(data)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// POST /api/automations/custom — save a custom automation (creates template + automation)
+automationsRouter.post('/custom', async (req: Request, res: Response) => {
+  try {
+    const { agentId, name, description, steps, variables, schedule, deliveryType, deliveryTarget } = req.body
+    if (!agentId || !name || !steps) return res.status(400).json({ error: 'agentId, name, steps required' })
+
+    const user = await getDefaultUser()
+
+    // Create a custom template (pending admin approval)
+    const templateId = `custom_${user.id}_${Date.now()}`
+    const template = await prisma.automationTemplate.create({
+      data: {
+        id: templateId,
+        name,
+        description: description ?? name,
+        category: 'analytics',
+        icon: 'custom',
+        isOfficial: false,
+        isApproved: false,
+        createdBy: user.id,
+        definition: {
+          id: templateId,
+          name,
+          description: description ?? name,
+          category: 'analytics',
+          icon: 'custom',
+          requires: [],
+          variables: variables ?? [],
+          steps,
+          delivery_options: ['chat', 'email', 'slack'],
+          estimated_duration: 'varies',
+          ai_recovery: true,
+        },
+      },
+    })
+
+    const automation = await prisma.automation.create({
+      data: {
+        userId: user.id,
+        agentId,
+        templateId,
+        name,
+        variables: {},
+        schedule: schedule ?? null,
+        deliveryType: deliveryType ?? 'chat',
+        deliveryTarget: deliveryTarget ?? null,
+      },
+      include: { agent: true, template: true },
+    })
+
+    if (automation.schedule) syncAutomation(automation)
+    res.status(201).json(automation)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// ─── Admin ────────────────────────────────────────────────────────────────────
+
+// GET /api/automations/admin/pending — list pending custom templates
+automationsRouter.get('/admin/pending', async (_req: Request, res: Response) => {
+  try {
+    const pending = await prisma.automationTemplate.findMany({
+      where: { isOfficial: false, isApproved: false },
+      orderBy: { createdAt: 'asc' },
+    })
+    res.json(pending)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// PATCH /api/automations/admin/:id/approve
+automationsRouter.patch('/admin/:id/approve', async (req: Request, res: Response) => {
+  try {
+    const template = await prisma.automationTemplate.update({
+      where: { id: req.params.id },
+      data: { isApproved: true, isOfficial: true },
+    })
+    res.json(template)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// DELETE /api/automations/admin/:id — reject custom template
+automationsRouter.delete('/admin/:id', async (req: Request, res: Response) => {
+  try {
+    await prisma.automationTemplate.delete({ where: { id: req.params.id } })
     res.status(204).send()
   } catch (err) {
     console.error(err)

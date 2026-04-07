@@ -1,0 +1,21 @@
+{
+  "id": "instagram_daily_summary",
+  "name": "Instagram Daily Summary",
+  "description": "Daily Instagram insights — reach, impressions, profile visits, follower growth",
+  "category": "social_media",
+  "icon": "instagram",
+  "requires": ["instagram_credentials"],
+  "variables": [
+    { "key": "time_period", "label": "Time Period", "type": "select", "options": ["Today", "Last 7 days", "Last 30 days"], "default": "Today" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "navigate", "url": "https://www.instagram.com/accounts/login/", "instructions": "Navigate to Instagram login" },
+    { "id": 2, "type": "browse", "action": "login", "credentials_key": "instagram_credentials", "instructions": "Log in with stored Instagram credentials" },
+    { "id": 3, "type": "browse", "action": "navigate", "url": "https://www.instagram.com/dashboard/", "instructions": "Navigate to Instagram professional dashboard" },
+    { "id": 4, "type": "browse", "action": "extract", "target": "insights_data", "instructions": "Extract reach, impressions, profile visits, and follower count from the insights page" },
+    { "id": 5, "type": "report", "action": "summarise", "format": "analytics_summary", "include": ["reach", "impressions", "profile_visits", "follower_change", "top_posts"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "60-90 seconds",
+  "ai_recovery": true
+}

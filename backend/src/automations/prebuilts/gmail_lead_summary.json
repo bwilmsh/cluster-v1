@@ -1,0 +1,21 @@
+{
+  "id": "gmail_lead_summary",
+  "name": "Gmail Lead Summary",
+  "description": "Find and summarise new business leads from your inbox — enquiries, new contacts, opportunities",
+  "category": "email",
+  "icon": "gmail",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "days_back", "label": "Look back", "type": "select", "options": ["1 day", "3 days", "7 days"], "default": "1 day" },
+    { "key": "lead_keywords", "label": "Lead keywords", "type": "text", "default": "interested,enquiry,quote,pricing,proposal", "placeholder": "interested,enquiry,quote" }
+  ],
+  "steps": [
+    { "id": 1, "type": "api", "action": "list_emails", "provider": "google", "endpoint": "gmail.users.messages.list", "params": { "maxResults": "50", "q": "is:inbox newer_than:{{days_back}}" } },
+    { "id": 2, "type": "api", "action": "get_email_details", "provider": "google", "endpoint": "gmail.users.messages.get", "params": { "format": "full" } },
+    { "id": 3, "type": "extract", "action": "process", "target": "lead_emails", "source": "api_result" },
+    { "id": 4, "type": "report", "action": "summarise", "format": "lead_summary", "include": ["lead_name", "company", "interest", "suggested_action"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack", "sheets"],
+  "estimated_duration": "20-40 seconds",
+  "ai_recovery": false
+}

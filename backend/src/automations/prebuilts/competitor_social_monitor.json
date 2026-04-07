@@ -1,0 +1,20 @@
+{
+  "id": "competitor_social_monitor",
+  "name": "Competitor Social Monitor",
+  "description": "Track what your competitors are posting on social media and what's performing for them",
+  "category": "content",
+  "icon": "eye",
+  "requires": [],
+  "variables": [
+    { "key": "competitor_1", "label": "Competitor 1 handle/name", "type": "text", "required": true, "placeholder": "@competitorname" },
+    { "key": "competitor_2", "label": "Competitor 2 (optional)", "type": "text", "placeholder": "@competitor2" },
+    { "key": "platform", "label": "Platform", "type": "select", "options": ["TikTok", "Instagram", "Both"], "default": "TikTok" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "extract", "url": "https://www.tiktok.com/@{{competitor_1}}", "instructions": "Extract recent posts, view counts, likes, and engagement metrics from this TikTok profile" },
+    { "id": 2, "type": "report", "action": "summarise", "format": "competitor_report", "include": ["recent_posts", "top_performing_content", "posting_frequency", "engagement_rate", "trending_topics"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "45-60 seconds",
+  "ai_recovery": true
+}

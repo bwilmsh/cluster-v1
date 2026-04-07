@@ -92,21 +92,38 @@ model WebCredential {
   createdAt DateTime @default(now())
 }
 
+model AutomationTemplate {
+  id          String       @id
+  name        String
+  description String
+  category    String
+  icon        String?
+  isOfficial  Boolean      @default(false)
+  isApproved  Boolean      @default(false)
+  definition  Json
+  createdBy   String?
+  createdAt   DateTime     @default(now())
+  automations Automation[]
+}
+
 model Automation {
-  id            String          @id @default(cuid())
-  userId        String
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agentId       String
-  agent         Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  name          String
-  goal          String
-  triggerType   String          @default("schedule") // "schedule" | "manual"
-  cronExpr      String?
-  active        Boolean         @default(true)
-  lastRunAt     DateTime?
-  lastRunStatus String?
-  createdAt     DateTime        @default(now())
-  runs          AutomationRun[]
+  id             String             @id @default(cuid())
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          Agent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  templateId     String
+  template       AutomationTemplate @relation(fields: [templateId], references: [id])
+  name           String
+  variables      Json               @default("{}")
+  schedule       String?
+  active         Boolean            @default(true)
+  deliveryType   String             @default("chat")
+  deliveryTarget String?
+  lastRunAt      DateTime?
+  lastRunStatus  String?
+  createdAt      DateTime           @default(now())
+  runs           AutomationRun[]
 }
 
 model AutomationRun {
@@ -115,9 +132,10 @@ model AutomationRun {
   automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
   startedAt    DateTime   @default(now())
   completedAt  DateTime?
-  status       String     // "running" | "success" | "failed"
+  status       String
   steps        Json       @default("[]")
   finalResult  String?
+  deliveredTo  String?
 }
 
 model BrowseActivity {

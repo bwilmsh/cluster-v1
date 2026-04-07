@@ -1,0 +1,20 @@
+{
+  "id": "trending_content_finder",
+  "name": "Trending Content Finder",
+  "description": "Find what's trending in your niche today — viral sounds, hashtags, and content ideas",
+  "category": "content",
+  "icon": "trending",
+  "requires": [],
+  "variables": [
+    { "key": "niche", "label": "Your niche/industry", "type": "text", "required": true, "placeholder": "fitness, cooking, fashion, tech..." },
+    { "key": "platform", "label": "Platform", "type": "select", "options": ["TikTok", "Instagram", "YouTube"], "default": "TikTok" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "extract", "url": "https://www.tiktok.com/explore", "instructions": "Find trending content, hashtags, and sounds relevant to {{niche}} niche" },
+    { "id": 2, "type": "browse", "action": "extract", "url": "https://www.google.com/search?q={{niche}}+trending+content+{{platform}}", "instructions": "Search for trending content ideas in {{niche}} on {{platform}}" },
+    { "id": 3, "type": "report", "action": "summarise", "format": "content_ideas", "include": ["trending_topics", "viral_formats", "hashtags", "content_ideas", "best_posting_time"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "30-60 seconds",
+  "ai_recovery": true
+}

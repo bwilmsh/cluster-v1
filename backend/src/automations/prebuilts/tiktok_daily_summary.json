@@ -1,0 +1,21 @@
+{
+  "id": "tiktok_daily_summary",
+  "name": "TikTok Daily Summary",
+  "description": "Get your daily TikTok analytics — views, likes, watch time, follower change",
+  "category": "social_media",
+  "icon": "tiktok",
+  "requires": ["tiktok_credentials"],
+  "variables": [
+    { "key": "time_period", "label": "Time Period", "type": "select", "options": ["Today", "Last 7 days", "Last 30 days"], "default": "Today" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "navigate", "url": "https://www.tiktok.com/login", "instructions": "Navigate to TikTok login page" },
+    { "id": 2, "type": "browse", "action": "login", "credentials_key": "tiktok_credentials", "instructions": "Log in with stored TikTok credentials" },
+    { "id": 3, "type": "browse", "action": "navigate", "url": "https://studio.tiktok.com/creator/analytics", "instructions": "Navigate to TikTok Studio analytics" },
+    { "id": 4, "type": "browse", "action": "extract", "target": "analytics_data", "instructions": "Extract views, likes, comments, shares, watch time, and follower count from the analytics dashboard" },
+    { "id": 5, "type": "report", "action": "summarise", "format": "analytics_summary", "include": ["views", "likes", "comments", "shares", "watch_time", "follower_change"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "60-90 seconds",
+  "ai_recovery": true
+}

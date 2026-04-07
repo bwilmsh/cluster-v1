@@ -1,0 +1,21 @@
+{
+  "id": "gmail_draft_replies",
+  "name": "Gmail Draft Replies",
+  "description": "AI drafts replies to your unread emails that need a response — you review before sending",
+  "category": "email",
+  "icon": "gmail",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "max_emails", "label": "Max emails to draft", "type": "select", "options": ["3", "5", "10"], "default": "5" },
+    { "key": "tone", "label": "Reply tone", "type": "select", "options": ["Professional", "Friendly", "Brief"], "default": "Professional" }
+  ],
+  "steps": [
+    { "id": 1, "type": "api", "action": "list_emails", "provider": "google", "endpoint": "gmail.users.messages.list", "params": { "maxResults": "{{max_emails}}", "q": "is:unread is:inbox" } },
+    { "id": 2, "type": "api", "action": "get_email_details", "provider": "google", "endpoint": "gmail.users.messages.get", "params": { "format": "full" } },
+    { "id": 3, "type": "report", "action": "draft_replies", "format": "email_drafts", "include": ["original_email", "suggested_reply", "tone"] },
+    { "id": 4, "type": "api", "action": "create_drafts", "provider": "google", "endpoint": "gmail.users.drafts.create" }
+  ],
+  "delivery_options": ["chat", "group_chat", "email"],
+  "estimated_duration": "30-60 seconds",
+  "ai_recovery": false
+}

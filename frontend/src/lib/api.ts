@@ -193,14 +193,28 @@ export const api = {
   },
 
   automations: {
+    templates: (): Promise<AutomationTemplate[]> =>
+      fetch(`${BASE}/automations/templates`).then((r) => r.json()).then((d) => safeArray<AutomationTemplate>(d)),
+
+    template: (id: string): Promise<AutomationTemplate> =>
+      fetch(`${BASE}/automations/templates/${id}`).then((r) => r.json()),
+
     list: (): Promise<AutomationListResponse> =>
       fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => ({
         automations: safeArray<Automation>(d?.automations ?? d),
         runsToday: typeof d?.runsToday === 'number' ? d.runsToday : 0,
-        dailyLimit: typeof d?.dailyLimit === 'number' ? d.dailyLimit : 3,
+        dailyLimit: typeof d?.dailyLimit === 'number' ? d.dailyLimit : 10,
       })),
 
-    create: (data: { agentId: string; name: string; goal: string; triggerType: string; cronExpr?: string }): Promise<Automation> =>
+    create: (data: {
+      agentId: string
+      templateId: string
+      name?: string
+      variables?: Record<string, string>
+      schedule?: string
+      deliveryType?: string
+      deliveryTarget?: string
+    }): Promise<Automation> =>
       fetch(`${BASE}/automations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -213,9 +227,6 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    preflight: (id: string): Promise<PreflightResult> =>
-      fetch(`${BASE}/automations/${id}/preflight`, { method: 'POST' }).then((r) => r.json()),
-
     run: (id: string): Promise<{ message?: string; error?: string; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
       fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
 
@@ -224,6 +235,40 @@ export const api = {
 
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/automations/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+    build: (description: string): Promise<BuildAutomationResult> =>
+      fetch(`${BASE}/automations/build`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description }),
+      }).then((r) => r.json()),
+
+    createCustom: (data: {
+      agentId: string
+      name: string
+      description?: string
+      steps: any[]
+      variables?: any[]
+      schedule?: string
+      deliveryType?: string
+      deliveryTarget?: string
+    }): Promise<Automation> =>
+      fetch(`${BASE}/automations/custom`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    admin: {
+      pending: (): Promise<AutomationTemplate[]> =>
+        fetch(`${BASE}/automations/admin/pending`).then((r) => r.json()).then((d) => safeArray<AutomationTemplate>(d)),
+
+      approve: (id: string): Promise<AutomationTemplate> =>
+        fetch(`${BASE}/automations/admin/${id}/approve`, { method: 'PATCH' }).then((r) => r.json()),
+
+      reject: (id: string): Promise<void> =>
+        fetch(`${BASE}/automations/admin/${id}`, { method: 'DELETE' }).then(() => undefined),
+    },
   },
 
   browse: {
@@ -246,41 +291,61 @@ export interface AutomationListResponse {
   dailyLimit: number
 }
 
+export interface AutomationTemplateVariable {
+  key: string
+  label: string
+  type: 'select' | 'text' | 'number'
+  options?: string[]
+  default?: string | number
+  required?: boolean
+  placeholder?: string
+}
+
+export interface AutomationTemplate {
+  id: string
+  name: string
+  description: string
+  category: string
+  icon: string
+  isOfficial: boolean
+  isApproved: boolean
+  createdAt: string
+  definition: {
+    requires: string[]
+    variables: AutomationTemplateVariable[]
+    steps: any[]
+    delivery_options: string[]
+    estimated_duration: string
+    ai_recovery: boolean
+  }
+}
+
 export interface Automation {
   id: string
   agentId: string
   agent: { id: string; name: string } | null
+  templateId: string
+  template: { id: string; name: string; icon: string; category: string } | null
   name: string
-  goal: string
-  triggerType: string
-  cronExpr: string | null
+  variables: Record<string, string>
+  schedule: string | null
   active: boolean
+  deliveryType: string
+  deliveryTarget: string | null
   lastRunAt: string | null
   lastRunStatus: string | null
   createdAt: string
 }
 
-export interface PreflightRequirement {
-  type: 'integration'
-  name: string
-  label: string
-  required: boolean
-  reason: string
-  workaround: string | null
-  connected: boolean
-}
-
-export interface PreflightResult {
-  requirements: PreflightRequirement[]
-  web_access: boolean
-  will_send_emails: boolean
-  will_modify_data: boolean
-  estimated_steps: number
-  notes: string
-  has_blockers: boolean
-  blockers: PreflightRequirement[]
-  warnings: PreflightRequirement[]
-  connected_integrations: string[]
+export interface BuildAutomationResult {
+  name?: string
+  description?: string
+  steps?: any[]
+  variables?: AutomationTemplateVariable[]
+  requires?: string[]
+  estimated_duration?: string
+  ai_recovery?: boolean
+  error?: string
 }
 
 export interface AutomationStep {

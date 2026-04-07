@@ -1,0 +1,21 @@
+{
+  "id": "sheets_daily_summary",
+  "name": "Sheets Daily Summary",
+  "description": "Pull data from a Google Sheet and get a clean daily summary with key metrics and changes",
+  "category": "analytics",
+  "icon": "sheets",
+  "requires": ["google_oauth"],
+  "variables": [
+    { "key": "sheet_url", "label": "Google Sheet URL", "type": "text", "required": true, "placeholder": "https://docs.google.com/spreadsheets/d/..." },
+    { "key": "sheet_range", "label": "Data range", "type": "text", "default": "Sheet1!A1:Z100", "placeholder": "Sheet1!A1:Z100" },
+    { "key": "metrics_row", "label": "Header row number", "type": "number", "default": 1 }
+  ],
+  "steps": [
+    { "id": 1, "type": "api", "action": "read_sheet", "provider": "google", "endpoint": "sheets.spreadsheets.values.get", "params": { "range": "{{sheet_range}}" } },
+    { "id": 2, "type": "extract", "action": "process", "target": "sheet_data", "source": "api_result" },
+    { "id": 3, "type": "report", "action": "summarise", "format": "data_summary", "include": ["key_metrics", "changes_from_yesterday", "totals", "anomalies"] }
+  ],
+  "delivery_options": ["chat", "group_chat", "email", "slack"],
+  "estimated_duration": "10-20 seconds",
+  "ai_recovery": false
+}

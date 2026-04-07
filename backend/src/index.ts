@@ -11,6 +11,7 @@ import { clusterRouter } from './routes/cluster'
 import { browseRouter } from './routes/browse'
 import { credentialsRouter } from './routes/credentials'
 import { automationsRouter, loadAutomations } from './routes/automations'
+import { seedTemplates } from './automations/seeder'
 
 dotenv.config({ path: '../.env' })
 
@@ -36,6 +37,7 @@ app.use('/api/automations', automationsRouter)
 const PORT = process.env.BACKEND_PORT ?? 3001
 app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`)
+  await seedTemplates()
   await loadAutomations()
 })
 

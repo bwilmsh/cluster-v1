@@ -1,0 +1,19 @@
+{
+  "id": "follower_milestone_alert",
+  "name": "Follower Milestone Alert",
+  "description": "Get notified when you hit follower milestones — 1K, 5K, 10K and custom targets",
+  "category": "alerts",
+  "icon": "star",
+  "requires": ["tiktok_credentials"],
+  "variables": [
+    { "key": "milestone", "label": "Follower milestone", "type": "select", "options": ["1,000", "5,000", "10,000", "50,000", "100,000"], "default": "1,000" },
+    { "key": "platform", "label": "Platform", "type": "select", "options": ["TikTok", "Instagram"], "default": "TikTok" }
+  ],
+  "steps": [
+    { "id": 1, "type": "browse", "action": "extract", "url": "https://studio.tiktok.com/creator/analytics", "instructions": "Get current follower count from analytics dashboard" },
+    { "id": 2, "type": "alert", "action": "check_milestone", "condition": "followers_gte_milestone", "threshold_variable": "milestone" }
+  ],
+  "delivery_options": ["chat", "email", "slack"],
+  "estimated_duration": "30-45 seconds",
+  "ai_recovery": true
+}
