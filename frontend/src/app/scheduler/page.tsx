@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   api, Agent, Automation, AutomationTemplate, AutomationRun, AutomationTemplateVariable,
-  BuildAutomationResult,
+  BuildAutomationResult, MissingRequirement, RequirementsResult,
 } from '@/lib/api'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,6 +100,17 @@ function ConfigureModal({
   const [min, setMin] = useState(0)
   const [deliveryType, setDeliveryType] = useState(def.delivery_options?.[0] ?? 'chat')
   const [saving, setSaving] = useState(false)
+  const [reqCheck, setReqCheck] = useState<RequirementsResult | null>(null)
+
+  useEffect(() => {
+    if ((def.requires ?? []).length === 0) {
+      setReqCheck({ ok: true, missing: [] })
+      return
+    }
+    api.automations.templateRequirements(template.id)
+      .then(setReqCheck)
+      .catch(() => {})
+  }, [template.id])
 
   function handleSave() {
     setSaving(true)
@@ -212,14 +223,9 @@ function ConfigureModal({
             </select>
           </div>
 
-          {/* Requirements notice */}
+          {/* Requirements check */}
           {(def.requires ?? []).length > 0 && (
-            <div className="rounded-lg border border-yellow-800/40 bg-yellow-950/30 p-3 text-xs text-yellow-300">
-              <div className="font-medium mb-1">Requires</div>
-              {def.requires.map((r: string) => (
-                <div key={r} className="text-yellow-400/80">· {r.replace(/_/g, ' ')}</div>
-              ))}
-            </div>
+            <RequirementsBlock reqCheck={reqCheck} rawRequires={def.requires} />
           )}
 
           <div className="text-xs text-zinc-500">Estimated run time: {def.estimated_duration}</div>
@@ -234,7 +240,7 @@ function ConfigureModal({
             disabled={saving || !agentId}
             className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50"
           >
-            {saving ? 'Activating…' : 'Activate Automation'}
+            {saving ? 'Activating…' : reqCheck && !reqCheck.ok ? 'Activate (requirements missing)' : 'Activate Automation'}
           </button>
         </div>
       </div>
@@ -313,6 +319,93 @@ function RunHistoryPanel({ automationId, onClose }: { automationId: string; onCl
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Requirements Block ───────────────────────────────────────────────────────
+
+function RequirementsBlock({
+  reqCheck,
+  rawRequires,
+}: {
+  reqCheck: RequirementsResult | null
+  rawRequires: string[]
+}) {
+  // While loading, show raw list
+  if (!reqCheck) {
+    return (
+      <div className="rounded-lg border border-yellow-800/40 bg-yellow-950/30 p-3 text-xs text-yellow-300">
+        <div className="font-medium mb-1">Requires</div>
+        {rawRequires.map((r) => (
+          <div key={r} className="text-yellow-400/80">· {r.replace(/_/g, ' ')}</div>
+        ))}
+      </div>
+    )
+  }
+
+  if (reqCheck.ok) {
+    return (
+      <div className="rounded-lg border border-green-800/40 bg-green-950/30 p-3 text-xs text-green-400 flex items-center gap-2">
+        <span>✓</span>
+        <span>All requirements connected</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-red-800/50 bg-red-950/30 p-3 text-xs space-y-2">
+      <div className="font-medium text-red-400">Missing requirements — automation will be blocked until resolved</div>
+      {reqCheck.missing.map((m) => (
+        <div key={m.key} className="flex items-start justify-between gap-2">
+          <div>
+            <span className="text-red-300">✗ {m.label} required</span>
+            <div className="text-red-400/60 mt-0.5">
+              {m.type === 'credentials'
+                ? 'Add in Settings → Credentials'
+                : 'Connect in Integrations'}
+            </div>
+          </div>
+          <a
+            href={m.settingsPath}
+            className="shrink-0 rounded px-2 py-1 bg-red-900/40 text-red-300 hover:bg-red-800/60 transition-colors"
+          >
+            Set up →
+          </a>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Missing Requirements Badge (inline on automation card) ───────────────────
+
+function MissingBadge({ missing }: { missing: MissingRequirement[] }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="mt-2">
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+        className="flex items-center gap-1.5 text-xs text-red-400 font-medium"
+      >
+        <span className="rounded-full bg-red-900/40 px-2 py-0.5">⚠ Missing requirements</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-1.5">
+          {missing.map((m) => (
+            <div key={m.key} className="flex items-center justify-between text-xs">
+              <span className="text-red-300/80">{m.label} not connected</span>
+              <a
+                href={m.settingsPath}
+                className="text-violet-400 hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {m.type === 'credentials' ? 'Add credentials →' : 'Connect →'}
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -469,6 +562,8 @@ export default function AutomationsPage() {
   const [historyId, setHistoryId] = useState<string | null>(null)
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  // Map of automationId → requirements result (loaded lazily after automations load)
+  const [reqMap, setReqMap] = useState<Record<string, RequirementsResult>>({})
 
   async function load() {
     const [tpl, { automations: a, runsToday: r, dailyLimit: d }, ag] = await Promise.all([
@@ -482,6 +577,14 @@ export default function AutomationsPage() {
     setRunsToday(r)
     setDailyLimit(d)
     setLoading(false)
+
+    // Fetch requirements for each automation in the background
+    const checks = await Promise.all(
+      a.map((auto) => api.automations.requirements(auto.id).catch(() => ({ ok: true, missing: [] } as RequirementsResult)))
+    )
+    const map: Record<string, RequirementsResult> = {}
+    a.forEach((auto, i) => { map[auto.id] = checks[i] })
+    setReqMap(map)
   }
 
   useEffect(() => { load() }, [])
@@ -512,11 +615,24 @@ export default function AutomationsPage() {
   }
 
   async function handleRun(id: string) {
+    // Block immediately if we already know requirements are missing
+    const knownReq = reqMap[id]
+    if (knownReq && !knownReq.ok) {
+      // Scroll to the card — the MissingBadge already shows details
+      return
+    }
+
     setRunningIds((s) => new Set(s).add(id))
     try {
       const r = await api.automations.run(id)
-      if (r.error) alert(r.error)
-      else setRunsToday(r.runsToday ?? runsToday)
+      if (r.missing && r.missing.length > 0) {
+        // Server confirmed missing — update reqMap so card shows badge
+        setReqMap((prev) => ({ ...prev, [id]: { ok: false, missing: r.missing! } }))
+      } else if (r.error) {
+        alert(r.error)
+      } else {
+        setRunsToday(r.runsToday ?? runsToday)
+      }
     } finally {
       setRunningIds((s) => { const n = new Set(s); n.delete(id); return n })
       setTimeout(load, 3000)
@@ -652,66 +768,84 @@ export default function AutomationsPage() {
                 </div>
               )}
 
-              {automations.map((a) => (
-                <div key={a.id} className="rounded-xl border border-zinc-700 bg-zinc-900 p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="text-xl">{iconEmoji(a.template?.icon ?? 'custom')}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-white text-sm">{a.name}</span>
-                        {!a.active && (
-                          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">Paused</span>
+              {automations.map((a) => {
+                const req = reqMap[a.id]
+                const blocked = req ? !req.ok : false
+                return (
+                  <div
+                    key={a.id}
+                    className={`rounded-xl border bg-zinc-900 p-4 ${blocked ? 'border-red-800/50' : 'border-zinc-700'}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-xl">{iconEmoji(a.template?.icon ?? 'custom')}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-white text-sm">{a.name}</span>
+                          {!a.active && (
+                            <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">Paused</span>
+                          )}
+                          {a.lastRunStatus === 'skipped' && (
+                            <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">Skipped</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-zinc-500 mt-0.5 flex gap-3">
+                          <span>{a.agent?.name ?? 'Unknown agent'}</span>
+                          <span>{cronToLabel(a.schedule)}</span>
+                          <span>→ {a.deliveryType}</span>
+                        </div>
+                        {a.lastRunAt && (
+                          <div className="text-xs mt-1 flex items-center gap-1.5">
+                            <span className={STATUS_COLORS[a.lastRunStatus ?? ''] ?? 'text-zinc-500'}>
+                              {a.lastRunStatus}
+                            </span>
+                            <span className="text-zinc-600">{timeAgo(a.lastRunAt)}</span>
+                          </div>
+                        )}
+                        {/* Requirements badge — shown only when check is done and something is missing */}
+                        {blocked && req && (
+                          <MissingBadge missing={req.missing} />
                         )}
                       </div>
-                      <div className="text-xs text-zinc-500 mt-0.5 flex gap-3">
-                        <span>{a.agent?.name ?? 'Unknown agent'}</span>
-                        <span>{cronToLabel(a.schedule)}</span>
-                        <span>→ {a.deliveryType}</span>
-                      </div>
-                      {a.lastRunAt && (
-                        <div className="text-xs mt-1 flex items-center gap-1.5">
-                          <span className={STATUS_COLORS[a.lastRunStatus ?? ''] ?? 'text-zinc-500'}>
-                            {a.lastRunStatus}
-                          </span>
-                          <span className="text-zinc-600">{timeAgo(a.lastRunAt)}</span>
-                        </div>
-                      )}
-                    </div>
 
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleRun(a.id)}
-                        disabled={runningIds.has(a.id)}
-                        title="Run now"
-                        className="rounded-lg px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:opacity-50"
-                      >
-                        {runningIds.has(a.id) ? '…' : '▶'}
-                      </button>
-                      <button
-                        onClick={() => setHistoryId(a.id)}
-                        title="Run history"
-                        className="rounded-lg px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                      >
-                        📋
-                      </button>
-                      <button
-                        onClick={() => handleToggle(a.id)}
-                        title={a.active ? 'Pause' : 'Resume'}
-                        className="rounded-lg px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                      >
-                        {a.active ? '⏸' : '▶️'}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(a.id)}
-                        title="Delete"
-                        className="rounded-lg px-2 py-1 text-xs text-red-500/60 hover:bg-zinc-800 hover:text-red-400"
-                      >
-                        🗑
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleRun(a.id)}
+                          disabled={runningIds.has(a.id) || blocked}
+                          title={blocked ? 'Missing requirements — see details below' : 'Run now'}
+                          className={`rounded-lg px-2 py-1 text-xs disabled:opacity-40 ${
+                            blocked
+                              ? 'text-red-400/50 cursor-not-allowed'
+                              : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                          }`}
+                        >
+                          {runningIds.has(a.id) ? '…' : '▶'}
+                        </button>
+                        <button
+                          onClick={() => setHistoryId(a.id)}
+                          title="Run history"
+                          className="rounded-lg px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                        >
+                          📋
+                        </button>
+                        <button
+                          onClick={() => handleToggle(a.id)}
+                          title={a.active ? 'Pause' : 'Resume'}
+                          className="rounded-lg px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                        >
+                          {a.active ? '⏸' : '▶️'}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(a.id)}
+                          title="Delete"
+                          className="rounded-lg px-2 py-1 text-xs text-red-500/60 hover:bg-zinc-800 hover:text-red-400"
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 

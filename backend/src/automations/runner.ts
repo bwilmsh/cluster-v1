@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
 import { loadTemplate, resolveVariables, interpolate, TemplateStep } from './templateLoader'
+import { checkRequirements } from './requirementsChecker'
 import { getUserIntegrationTokens } from '../routes/integrations'
 import { decrypt } from '../lib/crypto'
 
@@ -256,6 +257,32 @@ export async function runAutomation(automationId: string): Promise<void> {
     return
   }
 
+  // ── Requirements check — block before starting ────────────────────────────
+  const template = loadTemplate(automation.templateId)
+  const requires: string[] = (template as any)?.requires ?? []
+  if (requires.length > 0) {
+    const { ok, missing } = await checkRequirements(automation.userId, requires)
+    if (!ok) {
+      const missingList = missing.map((m) => m.label).join(', ')
+      console.warn(`Automation ${automationId} skipped — missing: ${missingList}`)
+      // Record a skipped run so history shows why it didn't execute
+      await prisma.automationRun.create({
+        data: {
+          automationId,
+          status: 'skipped',
+          steps: [],
+          finalResult: `Skipped — missing requirements: ${missingList}`,
+          completedAt: new Date(),
+        },
+      }).catch(console.error)
+      await prisma.automation.updateMany({
+        where: { id: automationId },
+        data: { lastRunAt: new Date(), lastRunStatus: 'skipped' },
+      }).catch(console.error)
+      return
+    }
+  }
+
   const run = await prisma.automationRun.create({
     data: { automationId, status: 'running', steps: [] },
   })
@@ -270,8 +297,6 @@ export async function runAutomation(automationId: string): Promise<void> {
   let status = 'success'
 
   try {
-    // Load template
-    const template = loadTemplate(automation.templateId)
     if (!template) throw new Error(`Template not found: ${automation.templateId}`)
 
     const vars = resolveVariables(template, automation.variables as Record<string, string>)

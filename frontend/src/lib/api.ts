@@ -199,6 +199,9 @@ export const api = {
     template: (id: string): Promise<AutomationTemplate> =>
       fetch(`${BASE}/automations/templates/${id}`).then((r) => r.json()),
 
+    templateRequirements: (id: string): Promise<RequirementsResult> =>
+      fetch(`${BASE}/automations/templates/${id}/requirements`).then((r) => r.json()),
+
     list: (): Promise<AutomationListResponse> =>
       fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => ({
         automations: safeArray<Automation>(d?.automations ?? d),
@@ -227,8 +230,11 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    run: (id: string): Promise<{ message?: string; error?: string; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
+    run: (id: string): Promise<{ message?: string; error?: string; missing?: MissingRequirement[]; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
       fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+
+    requirements: (id: string): Promise<RequirementsResult> =>
+      fetch(`${BASE}/automations/${id}/requirements`).then((r) => r.json()),
 
     runs: (id: string): Promise<AutomationRun[]> =>
       fetch(`${BASE}/automations/${id}/runs`).then((r) => r.json()).then((d) => safeArray<AutomationRun>(d)),
@@ -348,6 +354,18 @@ export interface BuildAutomationResult {
   error?: string
 }
 
+export interface MissingRequirement {
+  key: string
+  label: string
+  type: 'credentials' | 'integration'
+  settingsPath: string
+}
+
+export interface RequirementsResult {
+  ok: boolean
+  missing: MissingRequirement[]
+}
+
 export interface AutomationStep {
   tool: string
   input: Record<string, string>
@@ -360,7 +378,7 @@ export interface AutomationRun {
   automationId: string
   startedAt: string
   completedAt: string | null
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed' | 'skipped'
   steps: AutomationStep[]
   finalResult: string | null
 }

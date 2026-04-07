@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { prisma, getDefaultUser } from '../db'
 import { runAutomation, syncAutomation, loadAutomations, todayRunCount, DAILY_RUN_LIMIT } from '../automations/runner'
 import { loadAllTemplates, loadTemplate } from '../automations/templateLoader'
+import { checkRequirements } from '../automations/requirementsChecker'
 
 export { loadAutomations }
 
@@ -29,6 +30,21 @@ automationsRouter.get('/templates/:id', async (req: Request, res: Response) => {
     const template = await prisma.automationTemplate.findUnique({ where: { id: req.params.id } })
     if (!template) return res.status(404).json({ error: 'Not found' })
     res.json(template)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/automations/templates/:id/requirements — check requirements for a template (pre-activation)
+automationsRouter.get('/templates/:id/requirements', async (req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const template = await prisma.automationTemplate.findUnique({ where: { id: req.params.id } })
+    if (!template) return res.status(404).json({ error: 'Not found' })
+    const requires: string[] = (template.definition as any)?.requires ?? []
+    const result = await checkRequirements(user.id, requires)
+    res.json(result)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
@@ -68,6 +84,11 @@ automationsRouter.post('/', async (req: Request, res: Response) => {
     if (!template) return res.status(404).json({ error: 'Template not found' })
 
     const user = await getDefaultUser()
+
+    // Check requirements — include result in response so UI can warn immediately
+    const requires: string[] = (template.definition as any)?.requires ?? []
+    const reqCheck = await checkRequirements(user.id, requires)
+
     const automation = await prisma.automation.create({
       data: {
         userId: user.id,
@@ -82,7 +103,7 @@ automationsRouter.post('/', async (req: Request, res: Response) => {
       include: { agent: true, template: true },
     })
     syncAutomation(automation)
-    res.status(201).json(automation)
+    res.status(201).json({ ...automation, requirements: reqCheck })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
@@ -112,7 +133,11 @@ automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
     const [automation, runsToday] = await Promise.all([
-      prisma.automation.findUnique({ where: { id: req.params.id }, select: { id: true, name: true } }),
+      prisma.automation.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, name: true, templateId: true },
+        include: undefined,
+      }),
       todayRunCount(user.id),
     ])
     if (!automation) return res.status(404).json({ error: 'Not found' })
@@ -123,8 +148,41 @@ automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
         dailyLimit: DAILY_RUN_LIMIT,
       })
     }
+
+    // Hard block if requirements are missing
+    const template = await prisma.automationTemplate.findUnique({
+      where: { id: automation.templateId },
+      select: { definition: true },
+    })
+    const requires: string[] = (template?.definition as any)?.requires ?? []
+    const reqCheck = await checkRequirements(user.id, requires)
+    if (!reqCheck.ok) {
+      return res.status(422).json({
+        error: 'Missing requirements',
+        missing: reqCheck.missing,
+      })
+    }
+
     res.json({ message: 'Automation started', automationId: automation.id, runsToday: runsToday + 1, dailyLimit: DAILY_RUN_LIMIT })
     runAutomation(automation.id).catch(console.error)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/automations/:id/requirements — check requirements status
+automationsRouter.get('/:id/requirements', async (req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const automation = await prisma.automation.findUnique({
+      where: { id: req.params.id },
+      include: { template: true },
+    })
+    if (!automation) return res.status(404).json({ error: 'Not found' })
+    const requires: string[] = (automation.template?.definition as any)?.requires ?? []
+    const result = await checkRequirements(user.id, requires)
+    res.json(result)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
