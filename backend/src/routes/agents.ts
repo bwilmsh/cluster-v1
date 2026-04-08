@@ -162,6 +162,11 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
+  let aborted = false
+  req.on('close', () => { aborted = true })
 
   let fullContent = ''
 
@@ -187,6 +192,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
     if (!reader) throw new Error('No response body')
 
     while (true) {
+      if (aborted) { reader.cancel(); break }
       const { done, value } = await reader.read()
       if (done) break
       const chunk = decoder.decode(value, { stream: true })

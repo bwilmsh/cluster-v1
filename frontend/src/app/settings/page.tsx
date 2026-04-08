@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const eAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null
@@ -60,10 +59,7 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto p-8 max-w-2xl mx-auto">
-      <div className="flex items-center gap-4 mb-8">
-        <Link href="/" className="text-white/40 hover:text-white/70 text-sm transition-colors">
-          ←
-        </Link>
+      <div className="mb-8">
         <h1 className="text-xl font-semibold text-white">Settings</h1>
       </div>
 

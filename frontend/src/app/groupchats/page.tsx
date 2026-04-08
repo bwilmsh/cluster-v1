@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api, GroupChat, GroupChatMember } from '@/lib/api'
+import { LoadingDots } from '@/components/LoadingDots'
 
 const AVATAR_PALETTES = [
   { bg: 'bg-violet-500/20', text: 'text-violet-300', border: 'border-violet-500/40' },
@@ -96,7 +97,7 @@ export default function GroupChatsPage() {
         </div>
 
         {loading ? (
-          <div className="text-white/25 text-sm">Loading...</div>
+          <div className="py-12 flex justify-center"><LoadingDots /></div>
         ) : chats.length === 0 ? (
           <div className="text-center py-20 rounded-2xl border border-dashed border-white/8">
             <p className="text-white/25 text-sm mb-4">No group chats yet</p>

@@ -94,8 +94,8 @@ export function Sidebar() {
               href={href}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                 isActive
-                  ? 'bg-white/8 text-white font-medium'
-                  : 'text-white/40 hover:text-white/70 hover:bg-white/5'
+                  ? 'bg-white/[0.09] text-white font-medium ring-1 ring-white/[0.07]'
+                  : 'text-white/45 hover:text-white/75 hover:bg-white/[0.05]'
               }`}
             >
               <Icon className="w-4 h-4 shrink-0" />

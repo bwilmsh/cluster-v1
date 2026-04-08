@@ -41,14 +41,10 @@ const AVATAR_PALETTES = [
   { bg: 'bg-cyan-500/20', text: 'text-cyan-300', border: 'border-cyan-500/40' },
 ]
 
-const paletteCache: Record<string, (typeof AVATAR_PALETTES)[0]> = {}
-
 function getPalette(name: string) {
-  if (!paletteCache[name]) {
-    const i = Object.keys(paletteCache).length % AVATAR_PALETTES.length
-    paletteCache[name] = AVATAR_PALETTES[i]
-  }
-  return paletteCache[name]
+  let hash = 0
+  for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff
+  return AVATAR_PALETTES[hash % AVATAR_PALETTES.length]
 }
 
 function initials(name: string) {

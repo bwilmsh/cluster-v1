@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api, WebCredential } from '@/lib/api'
+import { LoadingDots } from '@/components/LoadingDots'
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -17,7 +18,6 @@ export default function CredentialsPage() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ siteName: '', siteUrl: '', username: '', password: '' })
   const [saving, setSaving] = useState(false)
-  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     api.credentials.list().then(setCreds).finally(() => setLoading(false))
@@ -75,7 +75,7 @@ export default function CredentialsPage() {
         </div>
 
         {loading ? (
-          <div className="text-white/25 text-sm">Loading...</div>
+          <div className="py-12 flex justify-center"><LoadingDots /></div>
         ) : creds.length === 0 && !showForm ? (
           <div className="text-center py-16 rounded-2xl border border-dashed border-white/8">
             <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">

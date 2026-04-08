@@ -177,6 +177,8 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
     res.write('data: [DONE]\n\n')
     res.end()
     return
@@ -217,6 +219,11 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
+  let aborted = false
+  req.on('close', () => { aborted = true })
 
   // History excluding the user message (slice off last entry = user msg we just saved)
   const historyForAgents = recentHistory.slice(0, -1).map((m) => ({
@@ -234,6 +241,7 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   const inTurnHistory = [...historyForAgents]
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
+    if (aborted) break
     const member = agentMembers.find((m: any) => m.agent.name === currentAgentName)
     if (!member) break
 
@@ -266,6 +274,7 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
       if (!reader) throw new Error('No body')
 
       while (true) {
+        if (aborted) { reader.cancel(); break }
         const { done, value } = await reader.read()
         if (done) break
         const chunk = decoder.decode(value, { stream: true })

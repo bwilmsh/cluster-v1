@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { LoadingDots } from '@/components/LoadingDots'
 
 interface Integration {
   provider: string
@@ -149,7 +150,7 @@ export default function IntegrationsPage() {
       )}
 
       {loading ? (
-        <div className="text-white/30 text-sm">Loading...</div>
+        <div className="py-12 flex justify-center"><LoadingDots /></div>
       ) : (
         <div className="space-y-3">
           {SERVICES.map((service) => {

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { api, Agent, AgentFile, Message } from '@/lib/api'
 import { ChatWindow, ChatMessage } from '@/components/ChatWindow'
 import { ComputerUsePanel } from '@/components/ComputerUsePanel'
+import { LoadingDots } from '@/components/LoadingDots'
 import { readSSE } from '@/lib/sse'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,7 +87,21 @@ export default function AgentChatPage() {
   const role = (agent?.setupAnswers as Record<string, string> | null)?.['Business type / role'] ?? ''
   const isActive = agent?.status !== 'setting_up' && agent?.status !== 'offline'
 
-  if (!agent) return <div className="p-8 text-white/30 text-sm">Loading...</div>
+  if (!agent) return (
+    <div className="h-full flex flex-col">
+      {/* Skeleton header */}
+      <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
+        <div className="w-6 h-4 bg-white/5 rounded animate-pulse" />
+        <div className="flex items-center gap-2.5">
+          <div className="w-2 h-2 rounded-full bg-white/10 animate-pulse" />
+          <div className="w-32 h-4 bg-white/5 rounded animate-pulse" />
+        </div>
+      </div>
+      <div className="flex-1 flex items-center justify-center">
+        <LoadingDots />
+      </div>
+    </div>
+  )
 
   return (
     <div className="h-full flex flex-col">

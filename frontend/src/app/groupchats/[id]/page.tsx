@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api, Agent, GroupChat, GroupChatMessage } from '@/lib/api'
 import { GroupChatWindow, GroupMessage, GroupMember } from '@/components/GroupChatWindow'
+import { LoadingDots } from '@/components/LoadingDots'
 import { readSSE } from '@/lib/sse'
 
 interface StreamingAgent {
@@ -141,7 +142,17 @@ export default function GroupChatPage() {
         }))
     : []
 
-  if (!chat) return <div className="p-8 text-white/30 text-sm">Loading...</div>
+  if (!chat) return (
+    <div className="h-full flex flex-col">
+      <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
+        <div className="w-6 h-4 bg-white/5 rounded animate-pulse" />
+        <div className="w-40 h-4 bg-white/5 rounded animate-pulse" />
+      </div>
+      <div className="flex-1 flex items-center justify-center">
+        <LoadingDots />
+      </div>
+    </div>
+  )
 
   return (
     <div className="h-full flex flex-col">
