@@ -54,16 +54,18 @@ If you genuinely couldn't access real data, say that plainly and explain what in
 
 GROUP_CHAT_CONTEXT_TEMPLATE = """TEAM CHAT — {chat_name}
 Your name: {agent_name}
+Your role: {agent_role}
 Your teammates: {teammates_list}
 Last message from: {sender_name}
 
-You are working as part of a team. You can see everything your teammates have said.
-When you finish your part of a task — explicitly hand off to a teammate by name.
-Example: "Done my part — @Sarah can you handle the social copy?"
-Only respond when your skill is genuinely needed.
-Never repeat what a teammate already covered.
-Build directly on what was just said.
-Keep responses short — this is a team Slack channel not a report.
+You are one member of a working team, not a solo assistant. Rules:
+- Read the conversation carefully. See what teammates already covered.
+- NEVER repeat what a teammate said. Pick up where they left off or add a different angle.
+- Your response should be clearly distinct from what's already been said.
+- Keep it tight — this is a team channel, not a one-person show.
+- If you need a specific teammate to act on something, address them directly: "@Name, can you..."
+- Lead with your contribution, not an intro. Don't say "As the X expert..." — just do the thing.
+- If the task is genuinely outside your expertise and a teammate already nailed it, say so in one line and add one thing they might have missed.
 
 ---"""
 
@@ -150,6 +152,10 @@ def build_group_system_prompt(
     chat_name: str = "Group Chat",
     integrations: dict | None = None,
 ) -> str:
+    # Find this agent's own role from the members list
+    self_member = next((m for m in members if m.get("name") == agent_name), {})
+    agent_role = self_member.get("role") or setup_answers.get("Business type / role") or "Team member"
+
     teammates = [m for m in members if m.get("name") != agent_name and m.get("type") == "agent"]
     teammates_parts = []
     for t in teammates:
@@ -160,6 +166,7 @@ def build_group_system_prompt(
     group_context = GROUP_CHAT_CONTEXT_TEMPLATE.format(
         chat_name=chat_name,
         agent_name=agent_name,
+        agent_role=agent_role,
         teammates_list=teammates_list,
         sender_name=sender_name,
     )
@@ -217,24 +224,23 @@ Return a JSON object with this exact structure:
 Return only valid JSON, no markdown, no explanation."""
 
 
-GROUP_RELEVANCE_PROMPT = """A message was sent in a group chat and you need to decide which agents should respond.
+GROUP_RELEVANCE_PROMPT = """Decide which agent(s) should respond in a team chat.
 
 Message from {sender_name}: "{message}"
 
-Agents available:
+{context_block}
+Agents:
 {agents_list}
 
 Rules:
-- An agent MUST be included if they were addressed directly by name in the message
-- An agent should be included if their specific expertise is clearly needed
-- Always include at least 1 agent (the most relevant one)
-- Return at most {max_responders} agents
-- Lean towards fewer responses — only include agents who genuinely add value
+- If an agent is directly addressed by name → they MUST respond
+- Match expertise to the actual task in the message
+- Return at most {max_responders} agent(s)
+- Lean toward fewer — only agents who genuinely add distinct value
+- Never include an agent just to be inclusive
 
-Return only this JSON:
-{{"responders": ["Agent Name", ...]}}
-
-No explanation, just the JSON."""
+Return ONLY this JSON (no explanation):
+{{"responders": ["Agent Name"]}}"""
 
 
 INITIAL_MEMORY_PROMPT = """You are creating the starting memory file for {agent_name}, an AI professional just onboarded at a small business.

@@ -77,7 +77,8 @@ class GroupRelevanceRequest(BaseModel):
     message: str
     sender_name: str
     agents: list[dict[str, Any]]
-    max_responders: int = 2
+    max_responders: int = 1
+    context: str = ""  # optional: prior agent response for continuation checks
 
 
 class GenerateQuestionsRequest(BaseModel):
@@ -238,7 +239,7 @@ async def stream_group_chat(
 
     with client.messages.stream(
         model=MODEL,
-        max_tokens=512,
+        max_tokens=1024,
         system=system_prompt,
         messages=messages,
     ) as stream:
@@ -492,17 +493,30 @@ def run_automation(req: AutomateRequest):
 @app.post("/group-relevance")
 async def group_relevance(req: GroupRelevanceRequest):
     client = get_client()
-    agents_list = "\n".join(f"- {a['name']}" for a in req.agents)
+
+    # Build agent list with roles when available
+    agents_lines = []
+    for a in req.agents:
+        role = a.get("role")
+        agents_lines.append(f"- {a['name']}" + (f" ({role})" if role else ""))
+    agents_list = "\n".join(agents_lines)
+
+    # Optional context block when checking continuation after a prior agent responded
+    context_block = ""
+    if req.context:
+        context_block = f"Prior response in this thread:\n\"\"\"\n{req.context[:600]}\n\"\"\"\n\n"
+
     prompt = GROUP_RELEVANCE_PROMPT.format(
         sender_name=req.sender_name,
         message=req.message,
         agents_list=agents_list,
         max_responders=req.max_responders,
+        context_block=context_block,
     )
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=128,
+        max_tokens=64,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -516,6 +530,9 @@ async def group_relevance(req: GroupRelevanceRequest):
     try:
         data = json.loads(raw)
         responders = data.get("responders", [])
+        # Validate names against actual agents
+        valid_names = {a["name"] for a in req.agents}
+        responders = [r for r in responders if r in valid_names]
         if not responders and req.agents:
             responders = [req.agents[0]["name"]]
         return {"responders": responders}
