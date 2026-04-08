@@ -24,7 +24,32 @@ Before each response, think through (internally — never show this):
 - What does this person actually need right now
 - What do I already know about this business from memory
 - Is there a better approach than what they asked for
-- What's the shortest path to a useful response"""
+- What's the shortest path to a useful response
+
+## Analytics & Reporting mode
+When asked for a morning report, analytics brief, content performance, or any data summary:
+- USE YOUR TOOLS FIRST — do not estimate or make things up. Pull real data.
+- If Google is connected: call list_gmail_messages to check recent/important emails
+- If credentials exist for social platforms: use browse_website to navigate their analytics dashboards
+- Use web_search for public metrics (follower counts, trending posts, platform-wide benchmarks)
+- After gathering data, write a structured brief — not a casual chat reply
+
+Report format (required for any analytics or morning brief request):
+**[what you're covering + date range]**
+
+**What's working**
+- [specific item with number if you have it]
+
+**What needs attention**
+- [honest assessment, specific]
+
+**Key numbers**
+- [metric: value] — pull real ones from your tools
+
+**One thing to do today**
+[Single clear action. Opinionated. Don't hedge.]
+
+If you genuinely couldn't access real data, say that plainly and explain what integration would fix it."""
 
 
 GROUP_CHAT_CONTEXT_TEMPLATE = """TEAM CHAT — {chat_name}
@@ -47,18 +72,32 @@ def _integration_context(integrations: dict) -> str:
     """Build a section telling the agent which integrations are connected and what it can do."""
     available = []
     if integrations.get("google_access_token"):
-        available.append("Google — read/send/draft Gmail emails, read/write Google Sheets, create Google Calendar events")
+        available.append(
+            "Google Workspace — "
+            "list_gmail_messages (check inbox/unread/important emails), "
+            "read_gmail_message (read full email content), "
+            "send_email (send emails), "
+            "read_sheet / write_sheet (Google Sheets data), "
+            "create_calendar_event"
+        )
     if os.environ.get("GMAIL_USER") and not integrations.get("google_access_token"):
-        available.append("Email — send emails via SMTP")
+        available.append("Email (SMTP) — send_email only, cannot read inbox")
     if integrations.get("slack_token"):
-        available.append("Slack — send messages to channels")
+        available.append("Slack — send_slack_message to any channel")
     if integrations.get("notion_token"):
-        available.append("Notion — create pages in databases")
+        available.append("Notion — create_notion_page in databases")
+
     if not available:
-        return ""
-    lines = ["Connected integrations (you have tools for all of these — use them):"]
+        return (
+            "\n\n## Integrations\n"
+            "No integrations connected. You can still use web_search for public data and "
+            "browse_website for sites that don't require login. "
+            "For email access, sheets, or sending messages, the user needs to connect an integration."
+        )
+
+    lines = ["Connected — you have tools for ALL of these, use them proactively:"]
     for item in available:
-        lines.append(f"- {item}")
+        lines.append(f"  • {item}")
     return "\n\n## Connected Integrations\n" + "\n".join(lines)
 
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import React, { useEffect, useRef } from 'react'
 
 export interface GroupMessage {
   id: string
@@ -103,10 +103,9 @@ export function GroupChatWindow({
                   {sa.name}
                 </p>
                 {sa.content ? (
-                  <p className="whitespace-pre-wrap leading-relaxed">
-                    {sa.content}
-                    <span className="inline-block w-1 h-3.5 bg-white/50 ml-0.5 animate-pulse align-middle" />
-                  </p>
+                  <div className="leading-relaxed">
+                    {renderAgentContent(sa.content, true)}
+                  </div>
                 ) : (
                   <div className="flex gap-1 items-center py-0.5">
                     <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -209,13 +208,59 @@ export function GroupChatWindow({
   )
 }
 
-function renderWithMentions(content: string) {
+function renderWithMentions(content: string): React.ReactNode[] {
   return content.split(/(@\w+)/g).map((part, i) =>
     /^@\w+$/.test(part) ? (
       <span key={i} className="text-violet-300 font-medium">{part}</span>
     ) : (
       part
     )
+  )
+}
+
+function renderAgentContent(text: string, cursor?: boolean): React.ReactNode {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+
+  function fmt(line: string, key: string): React.ReactNode {
+    const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    if (parts.length === 1) return renderWithMentions(line)
+    return (
+      <span key={key}>
+        {parts.map((p, i) => {
+          if (p.startsWith('**') && p.endsWith('**'))
+            return <strong key={i} className="font-semibold text-white">{p.slice(2, -2)}</strong>
+          if (p.startsWith('`') && p.endsWith('`'))
+            return <code key={i} className="bg-white/10 rounded px-1 text-xs font-mono">{p.slice(1, -1)}</code>
+          return renderWithMentions(p)
+        })}
+      </span>
+    )
+  }
+
+  lines.forEach((line, i) => {
+    const t = line.trim()
+    if (t.startsWith('## ') || t.startsWith('### ')) {
+      nodes.push(<p key={i} className="font-semibold text-white mt-2 mb-0.5">{t.replace(/^#+\s/, '')}</p>)
+    } else if (/^[-*•]\s/.test(t)) {
+      nodes.push(
+        <div key={i} className="flex gap-2">
+          <span className="text-white/30 shrink-0">·</span>
+          <span>{fmt(t.replace(/^[-*•]\s/, ''), `${i}t`)}</span>
+        </div>
+      )
+    } else if (t === '') {
+      if (i > 0 && lines[i - 1].trim() !== '') nodes.push(<div key={i} className="h-1.5" />)
+    } else {
+      nodes.push(<p key={i} className="leading-relaxed">{fmt(line, `${i}t`)}</p>)
+    }
+  })
+
+  return (
+    <>
+      {nodes}
+      {cursor && <span className="inline-block w-1 h-3.5 bg-white/50 ml-0.5 animate-pulse align-middle" />}
+    </>
   )
 }
 
@@ -248,7 +293,7 @@ function MessageRow({ msg }: { msg: GroupMessage }) {
       <Avatar name={msg.senderName} />
       <div className="max-w-[70%] rounded-xl px-4 py-2.5 text-sm bg-surface-raised border border-surface-border text-white/90">
         <p className={`text-xs font-semibold mb-1 ${p.text}`}>{msg.senderName}</p>
-        <p className="whitespace-pre-wrap leading-relaxed">{renderWithMentions(msg.content)}</p>
+        <div className="leading-relaxed">{renderAgentContent(msg.content)}</div>
       </div>
     </div>
   )

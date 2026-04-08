@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import React, { useEffect, useRef } from 'react'
 
 export interface ChatMessage {
   id: string
@@ -162,6 +162,80 @@ function TypingIndicator({ agentName, avatarColor }: { agentName?: string; avata
   )
 }
 
+/** Lightweight inline markdown → React nodes. Handles the patterns the agent uses. */
+function renderMarkdown(text: string, cursor?: boolean): React.ReactNode {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+
+  function inlineFormat(line: string, key: string): React.ReactNode {
+    // **bold**, *italic*, `code`
+    const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g)
+    if (parts.length === 1) return line
+    return (
+      <span key={key}>
+        {parts.map((part, i) => {
+          if (part.startsWith('**') && part.endsWith('**'))
+            return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>
+          if (part.startsWith('*') && part.endsWith('*'))
+            return <em key={i} className="italic">{part.slice(1, -1)}</em>
+          if (part.startsWith('`') && part.endsWith('`'))
+            return <code key={i} className="bg-white/10 rounded px-1 py-0.5 text-xs font-mono">{part.slice(1, -1)}</code>
+          return part
+        })}
+      </span>
+    )
+  }
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+
+    // H2/H3 headers
+    if (trimmed.startsWith('### ')) {
+      nodes.push(<p key={i} className="font-semibold text-white/80 text-xs uppercase tracking-wide mt-3 mb-1">{trimmed.slice(4)}</p>)
+    } else if (trimmed.startsWith('## ')) {
+      nodes.push(<p key={i} className="font-semibold text-white mt-3 mb-1">{trimmed.slice(3)}</p>)
+    } else if (trimmed.startsWith('# ')) {
+      nodes.push(<p key={i} className="font-semibold text-white text-base mt-2 mb-1">{trimmed.slice(2)}</p>)
+    // Bullet/dash list items
+    } else if (/^[-*•]\s/.test(trimmed)) {
+      nodes.push(
+        <div key={i} className="flex gap-2 leading-relaxed">
+          <span className="text-white/30 shrink-0 mt-px">·</span>
+          <span>{inlineFormat(trimmed.replace(/^[-*•]\s/, ''), `${i}t`)}</span>
+        </div>
+      )
+    // Numbered list
+    } else if (/^\d+\.\s/.test(trimmed)) {
+      const num = trimmed.match(/^(\d+)\./)?.[1]
+      nodes.push(
+        <div key={i} className="flex gap-2 leading-relaxed">
+          <span className="text-white/40 shrink-0 tabular-nums w-4 text-right">{num}.</span>
+          <span>{inlineFormat(trimmed.replace(/^\d+\.\s/, ''), `${i}t`)}</span>
+        </div>
+      )
+    // Horizontal rule
+    } else if (/^---+$/.test(trimmed)) {
+      nodes.push(<hr key={i} className="border-white/10 my-2" />)
+    // Empty line — spacing
+    } else if (trimmed === '') {
+      if (i > 0 && lines[i - 1].trim() !== '') nodes.push(<div key={i} className="h-2" />)
+    // Normal paragraph line
+    } else {
+      nodes.push(<p key={i} className="leading-relaxed">{inlineFormat(line, `${i}t`)}</p>)
+    }
+    i++
+  }
+
+  return (
+    <>
+      {nodes}
+      {cursor && <span className="inline-block w-1 h-3.5 bg-white/50 ml-0.5 animate-pulse align-middle" />}
+    </>
+  )
+}
+
 function MessageBubble({
   message,
   agentName,
@@ -190,13 +264,8 @@ function MessageBubble({
       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${avatarColor}`}>
         {getInitials(agentName ?? 'AI')}
       </div>
-      <div className="max-w-[72%] rounded-2xl rounded-bl-sm px-4 py-2.5 text-sm bg-surface-raised border border-surface-border text-white/90">
-        <p className="whitespace-pre-wrap leading-relaxed">
-          {message.content}
-          {isStreaming && (
-            <span className="inline-block w-1 h-3.5 bg-white/50 ml-0.5 animate-pulse align-middle" />
-          )}
-        </p>
+      <div className="max-w-[72%] rounded-2xl rounded-bl-sm px-4 py-2.5 text-sm bg-surface-raised border border-surface-border text-white/90 space-y-0">
+        {renderMarkdown(message.content, isStreaming)}
       </div>
     </div>
   )

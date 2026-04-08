@@ -155,10 +155,15 @@ def run_tool_use_loop(
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": result[:2000],
+                    "content": result[:4000],
                 })
 
-        # Append assistant response + tool results to messages
+        # If all tool calls were native (web_search), there's nothing for us to execute.
+        # Break to avoid an infinite loop — the next stream call will handle the response.
+        if not tool_results:
+            break
+
+        # Append assistant response + our tool results to messages
         messages = messages + [
             {"role": "assistant", "content": response.content},
             {"role": "user", "content": tool_results},

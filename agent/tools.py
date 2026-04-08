@@ -191,6 +191,47 @@ RUN_SCHEDULED_SUMMARY_TOOL = {
     },
 }
 
+LIST_GMAIL_MESSAGES_TOOL = {
+    "name": "list_gmail_messages",
+    "description": (
+        "List recent Gmail messages with subject, sender, date, and preview. "
+        "Use this to check unread emails, find important threads, or get an inbox overview for a morning report. "
+        "Returns a list with message IDs you can pass to read_gmail_message."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Gmail search query. Examples: 'is:unread', 'is:important', "
+                    "'newer_than:1d', 'from:client@example.com'. Leave empty for recent inbox."
+                ),
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Number of emails to return (default 15, max 30)",
+            },
+        },
+        "required": [],
+    },
+}
+
+READ_GMAIL_MESSAGE_TOOL = {
+    "name": "read_gmail_message",
+    "description": (
+        "Read the full text content of a specific Gmail message. "
+        "Get message IDs from list_gmail_messages first."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "message_id": {"type": "string", "description": "Gmail message ID from list_gmail_messages"},
+        },
+        "required": ["message_id"],
+    },
+}
+
 READ_SHEET_TOOL = {
     "name": "read_sheet",
     "description": "Read data from a Google Sheet. Returns the cell values as CSV text.",
@@ -290,7 +331,13 @@ def get_available_tools(integrations: dict) -> list:
 
     # Google OAuth tools
     if integrations.get("google_access_token"):
-        tools.extend([READ_SHEET_TOOL, WRITE_SHEET_TOOL, CREATE_CALENDAR_EVENT_TOOL])
+        tools.extend([
+            LIST_GMAIL_MESSAGES_TOOL,
+            READ_GMAIL_MESSAGE_TOOL,
+            READ_SHEET_TOOL,
+            WRITE_SHEET_TOOL,
+            CREATE_CALENDAR_EVENT_TOOL,
+        ])
 
     if integrations.get("slack_token"):
         tools.append(SEND_SLACK_MESSAGE_TOOL)
@@ -344,6 +391,10 @@ def execute_tool(name: str, inputs: dict, integrations: dict) -> str:
                 return "Email not configured. Set GMAIL_USER and GMAIL_PASSWORD in .env, or connect Google."
 
         # Google OAuth tools
+        elif name == "list_gmail_messages":
+            return _list_gmail_messages(inputs, integrations["google_access_token"])
+        elif name == "read_gmail_message":
+            return _read_gmail_message(inputs, integrations["google_access_token"])
         elif name == "read_sheet":
             return _read_sheet(inputs, integrations["google_access_token"])
         elif name == "write_sheet":
@@ -532,6 +583,120 @@ def _send_email_oauth(inputs: dict, access_token: str) -> str:
     )
     r.raise_for_status()
     return f"Email sent to {inputs['to']} — subject: {inputs['subject']}"
+
+
+def _extract_gmail_body(payload: dict) -> str:
+    """Recursively extract plain text from a Gmail message payload."""
+    import base64
+    mime_type = payload.get("mimeType", "")
+
+    if mime_type == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+
+    if mime_type.startswith("multipart/"):
+        parts = payload.get("parts", [])
+        # Prefer plain text
+        for part in parts:
+            if part.get("mimeType") == "text/plain":
+                result = _extract_gmail_body(part)
+                if result.strip():
+                    return result
+        # Fall back to HTML
+        for part in parts:
+            if part.get("mimeType") == "text/html":
+                result = _extract_gmail_body(part)
+                if result.strip():
+                    return result
+        # Recurse into nested multipart
+        for part in parts:
+            result = _extract_gmail_body(part)
+            if result.strip():
+                return result
+
+    if mime_type == "text/html":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            html = base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+            try:
+                from bs4 import BeautifulSoup
+                return BeautifulSoup(html, "html.parser").get_text(separator="\n")
+            except Exception:
+                return re.sub(r"<[^>]+>", " ", html)
+
+    return ""
+
+
+def _list_gmail_messages(inputs: dict, access_token: str) -> str:
+    query = inputs.get("query", "")
+    max_results = min(int(inputs.get("max_results", 15)), 30)
+
+    params: dict = {"maxResults": max_results}
+    if query:
+        params["q"] = query
+
+    r = httpx.get(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        headers=_google_headers(access_token),
+        params=params,
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    messages = data.get("messages", [])
+    if not messages:
+        return "No messages found."
+
+    results = []
+    for msg in messages[:15]:
+        try:
+            r2 = httpx.get(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg['id']}",
+                headers=_google_headers(access_token),
+                params={"format": "metadata", "metadataHeaders": ["Subject", "From", "Date"]},
+                timeout=10,
+            )
+            r2.raise_for_status()
+            md = r2.json()
+            hdrs = {h["name"]: h["value"] for h in md.get("payload", {}).get("headers", [])}
+            snippet = md.get("snippet", "")[:150]
+            results.append(
+                f"[{msg['id']}] {hdrs.get('Date', '')}\n"
+                f"  From: {hdrs.get('From', 'Unknown')}\n"
+                f"  Subject: {hdrs.get('Subject', '(no subject)')}\n"
+                f"  Preview: {snippet}"
+            )
+        except Exception:
+            results.append(f"[{msg['id']}] (could not load)")
+
+    total = data.get("resultSizeEstimate", len(messages))
+    return f"{total} message(s) found:\n\n" + "\n\n".join(results)
+
+
+def _read_gmail_message(inputs: dict, access_token: str) -> str:
+    message_id = inputs["message_id"]
+    r = httpx.get(
+        f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}",
+        headers=_google_headers(access_token),
+        params={"format": "full"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    msg = r.json()
+
+    payload = msg.get("payload", {})
+    hdrs = {h["name"]: h["value"] for h in payload.get("headers", [])}
+    body = _extract_gmail_body(payload).strip()
+
+    result = (
+        f"From: {hdrs.get('From', 'Unknown')}\n"
+        f"Subject: {hdrs.get('Subject', '(no subject)')}\n"
+        f"Date: {hdrs.get('Date', '')}\n\n"
+        f"{body[:2500]}"
+    )
+    return result if body else result + "(no readable body)"
 
 
 def _extract_sheet_id(sheet_id_or_url: str) -> str:
