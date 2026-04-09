@@ -193,15 +193,6 @@ export const api = {
   },
 
   automations: {
-    templates: (): Promise<AutomationTemplate[]> =>
-      fetch(`${BASE}/automations/templates`).then((r) => r.json()).then((d) => safeArray<AutomationTemplate>(d)),
-
-    template: (id: string): Promise<AutomationTemplate> =>
-      fetch(`${BASE}/automations/templates/${id}`).then((r) => r.json()),
-
-    templateRequirements: (id: string): Promise<RequirementsResult> =>
-      fetch(`${BASE}/automations/templates/${id}/requirements`).then((r) => r.json()),
-
     list: (): Promise<AutomationListResponse> =>
       fetch(`${BASE}/automations`).then((r) => r.json()).then((d) => ({
         automations: safeArray<Automation>(d?.automations ?? d),
@@ -211,9 +202,8 @@ export const api = {
 
     create: (data: {
       agentId: string
-      templateId: string
+      goal: string
       name?: string
-      variables?: Record<string, string>
       schedule?: string
       deliveryType?: string
       deliveryTarget?: string
@@ -230,40 +220,14 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
       }).then((r) => r.json()),
 
-    run: (id: string): Promise<{ message?: string; error?: string; missing?: MissingRequirement[]; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
+    run: (id: string): Promise<{ message?: string; error?: string; automationId?: string; runsToday?: number; dailyLimit?: number }> =>
       fetch(`${BASE}/automations/${id}/run`, { method: 'POST' }).then((r) => r.json()),
-
-    requirements: (id: string): Promise<RequirementsResult> =>
-      fetch(`${BASE}/automations/${id}/requirements`).then((r) => r.json()),
 
     runs: (id: string): Promise<AutomationRun[]> =>
       fetch(`${BASE}/automations/${id}/runs`).then((r) => r.json()).then((d) => safeArray<AutomationRun>(d)),
 
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/automations/${id}`, { method: 'DELETE' }).then(() => undefined),
-
-    build: (description: string): Promise<BuildAutomationResult> =>
-      fetch(`${BASE}/automations/build`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
-      }).then((r) => r.json()),
-
-    createCustom: (data: {
-      agentId: string
-      name: string
-      description?: string
-      steps: any[]
-      variables?: any[]
-      schedule?: string
-      deliveryType?: string
-      deliveryTarget?: string
-    }): Promise<Automation> =>
-      fetch(`${BASE}/automations/custom`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      }).then((r) => r.json()),
 
     admin: {
       pending: (): Promise<AutomationTemplate[]> =>
@@ -330,40 +294,16 @@ export interface Automation {
   id: string
   agentId: string
   agent: { id: string; name: string } | null
-  templateId: string
-  template: { id: string; name: string; icon: string; category: string } | null
   name: string
-  variables: Record<string, string>
+  goal: string | null
   schedule: string | null
   active: boolean
   deliveryType: string
   deliveryTarget: string | null
   lastRunAt: string | null
   lastRunStatus: string | null
+  lastRunResult: string | null
   createdAt: string
-}
-
-export interface BuildAutomationResult {
-  name?: string
-  description?: string
-  steps?: any[]
-  variables?: AutomationTemplateVariable[]
-  requires?: string[]
-  estimated_duration?: string
-  ai_recovery?: boolean
-  error?: string
-}
-
-export interface MissingRequirement {
-  key: string
-  label: string
-  type: 'credentials' | 'integration'
-  settingsPath: string
-}
-
-export interface RequirementsResult {
-  ok: boolean
-  missing: MissingRequirement[]
 }
 
 export interface AutomationStep {

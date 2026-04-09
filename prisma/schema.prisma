@@ -107,22 +107,24 @@ model AutomationTemplate {
 }
 
 model Automation {
-  id             String             @id @default(cuid())
+  id             String              @id @default(cuid())
   userId         String
-  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   agentId        String
-  agent          Agent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  templateId     String
-  template       AutomationTemplate @relation(fields: [templateId], references: [id])
+  agent          Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  templateId     String?
+  template       AutomationTemplate? @relation(fields: [templateId], references: [id])
   name           String
-  variables      Json               @default("{}")
+  goal           String?
+  variables      Json                @default("{}")
   schedule       String?
-  active         Boolean            @default(true)
-  deliveryType   String             @default("chat")
+  active         Boolean             @default(true)
+  deliveryType   String              @default("chat")
   deliveryTarget String?
   lastRunAt      DateTime?
   lastRunStatus  String?
-  createdAt      DateTime           @default(now())
+  lastRunResult  String?
+  createdAt      DateTime            @default(now())
   runs           AutomationRun[]
 }
 
