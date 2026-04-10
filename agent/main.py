@@ -286,15 +286,6 @@ async def group_chat(req: GroupChatRequest):
     )
 
 
-class AutomateRequest(BaseModel):
-    agent_name: str
-    agent_id: str = ""
-    setup_answers: dict[str, Any] = {}
-    memory: str = ""
-    goal: str
-    integrations: dict[str, Any] = {}
-
-
 def _blocks_to_dict(content) -> list[dict]:
     """Convert Anthropic SDK content blocks to plain dicts for re-use in messages."""
     result = []
