@@ -15,7 +15,7 @@ automationsRouter.get('/', async (_req: Request, res: Response) => {
     const [automations, runsToday] = await Promise.all([
       prisma.automation.findMany({
         where: { userId: user.id },
-        include: { agent: true },
+        include: { agent: true, requiredIntegrations: true },
         orderBy: { createdAt: 'desc' },
       }),
       todayRunCount(user.id),
@@ -30,7 +30,7 @@ automationsRouter.get('/', async (_req: Request, res: Response) => {
 // POST /api/automations — create automation from a natural language goal
 automationsRouter.post('/', async (req: Request, res: Response) => {
   try {
-    const { agentId, goal, name, schedule, deliveryType, deliveryTarget } = req.body
+    const { agentId, goal, name, schedule, deliveryType, deliveryTarget, requiredIntegrations } = req.body
     if (!agentId || !goal) {
       return res.status(400).json({ error: 'agentId and goal required' })
     }
@@ -46,8 +46,16 @@ automationsRouter.post('/', async (req: Request, res: Response) => {
         schedule: schedule ?? null,
         deliveryType: deliveryType ?? 'chat',
         deliveryTarget: deliveryTarget ?? null,
+        requiredIntegrations: requiredIntegrations?.length
+          ? {
+              create: (requiredIntegrations as string[]).map((provider: string) => ({
+                provider,
+                isRequired: true,
+              })),
+            }
+          : undefined,
       },
-      include: { agent: true },
+      include: { agent: true, requiredIntegrations: true },
     })
 
     syncAutomation(automation)
@@ -95,6 +103,40 @@ automationsRouter.post('/:id/run', async (req: Request, res: Response) => {
 
     res.json({ message: 'Automation started', automationId: automation.id, runsToday: runsToday + 1, dailyLimit: DAILY_RUN_LIMIT })
     runAutomation(automation.id).catch(console.error)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// PATCH /api/automations/:id/integrations — update required integrations
+automationsRouter.patch('/:id/integrations', async (req: Request, res: Response) => {
+  try {
+    const { requiredIntegrations } = req.body
+    if (!Array.isArray(requiredIntegrations)) {
+      return res.status(400).json({ error: 'requiredIntegrations must be an array' })
+    }
+
+    const existing = await prisma.automation.findUnique({ where: { id: req.params.id } })
+    if (!existing) return res.status(404).json({ error: 'Not found' })
+
+    // Delete existing and recreate
+    await prisma.automationIntegration.deleteMany({ where: { automationId: req.params.id } })
+
+    const automation = await prisma.automation.update({
+      where: { id: req.params.id },
+      data: {
+        requiredIntegrations: {
+          create: (requiredIntegrations as string[]).map((provider: string) => ({
+            provider,
+            isRequired: true,
+          })),
+        },
+      },
+      include: { agent: true, requiredIntegrations: true },
+    })
+
+    res.json(automation)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })

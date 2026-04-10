@@ -107,25 +107,37 @@ model AutomationTemplate {
 }
 
 model Automation {
-  id             String              @id @default(cuid())
-  userId         String
-  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agentId        String
-  agent          Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  templateId     String?
-  template       AutomationTemplate? @relation(fields: [templateId], references: [id])
-  name           String
-  goal           String?
-  variables      Json                @default("{}")
-  schedule       String?
-  active         Boolean             @default(true)
-  deliveryType   String              @default("chat")
-  deliveryTarget String?
-  lastRunAt      DateTime?
-  lastRunStatus  String?
-  lastRunResult  String?
-  createdAt      DateTime            @default(now())
-  runs           AutomationRun[]
+  id                    String                  @id @default(cuid())
+  userId                String
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId               String
+  agent                 Agent                   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  templateId            String?
+  template              AutomationTemplate?     @relation(fields: [templateId], references: [id])
+  name                  String
+  goal                  String?
+  variables             Json                    @default("{}")
+  schedule              String?
+  active                Boolean                 @default(true)
+  deliveryType          String                  @default("chat")
+  deliveryTarget        String?
+  lastRunAt             DateTime?
+  lastRunStatus         String?
+  lastRunResult         String?
+  createdAt             DateTime                @default(now())
+  runs                  AutomationRun[]
+  requiredIntegrations  AutomationIntegration[]
+}
+
+model AutomationIntegration {
+  id            String     @id @default(cuid())
+  automationId  String
+  automation    Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  provider      String     // "google" | "slack" | "notion"
+  isRequired    Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+
+  @@unique([automationId, provider])
 }
 
 model AutomationRun {

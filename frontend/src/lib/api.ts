@@ -207,6 +207,7 @@ export const api = {
       schedule?: string
       deliveryType?: string
       deliveryTarget?: string
+      requiredIntegrations?: string[]
     }): Promise<Automation> =>
       fetch(`${BASE}/automations`, {
         method: 'POST',
@@ -228,6 +229,13 @@ export const api = {
 
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/automations/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+    updateIntegrations: (id: string, requiredIntegrations: string[]): Promise<Automation> =>
+      fetch(`${BASE}/automations/${id}/integrations`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requiredIntegrations }),
+      }).then((r) => r.json()),
 
     admin: {
       pending: (): Promise<AutomationTemplate[]> =>
@@ -290,6 +298,14 @@ export interface AutomationTemplate {
   }
 }
 
+export interface AutomationIntegration {
+  id: string
+  automationId: string
+  provider: string // "google" | "slack" | "notion"
+  isRequired: boolean
+  createdAt: string
+}
+
 export interface Automation {
   id: string
   agentId: string
@@ -304,6 +320,7 @@ export interface Automation {
   lastRunStatus: string | null
   lastRunResult: string | null
   createdAt: string
+  requiredIntegrations: AutomationIntegration[]
 }
 
 export interface AutomationStep {

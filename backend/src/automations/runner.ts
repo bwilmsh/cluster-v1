@@ -22,7 +22,7 @@ export async function todayRunCount(userId: string): Promise<number> {
 export async function runAutomation(automationId: string): Promise<void> {
   const automation = await prisma.automation.findUnique({
     where: { id: automationId },
-    include: { agent: true },
+    include: { agent: true, requiredIntegrations: true },
   }).catch(() => null)
 
   if (!automation || !automation.agent) return
@@ -39,6 +39,38 @@ export async function runAutomation(automationId: string): Promise<void> {
   const goal = automation.goal || automation.name
 
   // ── Preflight: check if required integrations are connected ────────────────
+  // Build list of connected integrations from tokens
+  const connectedIntegrations: string[] = []
+  if (integrationTokens['google'] || integrationTokens['google_access_token']) connectedIntegrations.push('google')
+  if (integrationTokens['slack'] || integrationTokens['slack_token']) connectedIntegrations.push('slack')
+  if (integrationTokens['notion'] || integrationTokens['notion_token']) connectedIntegrations.push('notion')
+
+  // Check stored required integrations first (from database relationship)
+  const requiredProviders = (automation.requiredIntegrations ?? [])
+    .filter((ri) => ri.isRequired)
+    .map((ri) => ri.provider)
+
+  const missingRequired = requiredProviders.filter((p) => !connectedIntegrations.includes(p))
+
+  if (missingRequired.length > 0) {
+    const msg = `Missing required integrations: ${missingRequired.join(', ')}. Connect them at /integrations.`
+    await prisma.automationRun.create({
+      data: {
+        automationId,
+        status: 'skipped',
+        steps: [],
+        finalResult: msg,
+        completedAt: new Date(),
+      },
+    }).catch(console.error)
+    await prisma.automation.update({
+      where: { id: automationId },
+      data: { lastRunAt: new Date(), lastRunStatus: 'skipped', lastRunResult: msg },
+    }).catch(console.error)
+    return
+  }
+
+  // Also call Python preflight for dynamic requirement detection
   try {
     const preflightRes = await fetch(`${PYTHON_URL()}/preflight`, {
       method: 'POST',
@@ -47,11 +79,8 @@ export async function runAutomation(automationId: string): Promise<void> {
         goal,
         agent_name: automation.agent.name,
         agent_id: automation.agentId,
-        connected_integrations: [
-          integrationTokens['google_access_token'] ? 'google' : null,
-          integrationTokens['slack_token'] ? 'slack' : null,
-          integrationTokens['notion_token'] ? 'notion' : null,
-        ].filter(Boolean),
+        connected_integrations: connectedIntegrations,
+        required_integrations: requiredProviders,
       }),
     })
 
