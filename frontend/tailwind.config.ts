@@ -12,12 +12,12 @@ const config: Config = {
         surface: {
           DEFAULT: '#0a0a0a',
           raised: '#111111',
-          border: '#1f1f1f',
-          hover: '#161616',
+          border: '#2a2a2a',
+          hover: '#222222',
         },
         accent: {
-          DEFAULT: '#7c3aed',
-          hover: '#6d28d9',
+          DEFAULT: '#6366f1',
+          hover: '#4f52d4',
         },
       },
       fontFamily: {

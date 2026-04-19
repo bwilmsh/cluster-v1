@@ -15,14 +15,12 @@ function getInitials(name: string): string {
 
 function getRoleColors(role: string) {
   const r = role.toLowerCase()
-  if (r.match(/market/))                   return { border: 'border-l-violet-500',  avatar: 'bg-violet-500/20 text-violet-300' }
-  if (r.match(/sales/))                    return { border: 'border-l-blue-500',    avatar: 'bg-blue-500/20 text-blue-300' }
-  if (r.match(/support|customer/))         return { border: 'border-l-emerald-500', avatar: 'bg-emerald-500/20 text-emerald-300' }
-  if (r.match(/finance|account|book/))     return { border: 'border-l-amber-500',   avatar: 'bg-amber-500/20 text-amber-300' }
-  if (r.match(/hr|recruit|people/))        return { border: 'border-l-rose-500',    avatar: 'bg-rose-500/20 text-rose-300' }
-  if (r.match(/tech|dev|engineer|code/))   return { border: 'border-l-cyan-500',    avatar: 'bg-cyan-500/20 text-cyan-300' }
-  if (r.match(/content|creat|copy|writ/))  return { border: 'border-l-pink-500',    avatar: 'bg-pink-500/20 text-pink-300' }
-  if (r.match(/ops|operat|logist/))        return { border: 'border-l-orange-500',  avatar: 'bg-orange-500/20 text-orange-300' }
+  if (r.match(/work|efficient/))            return { border: 'border-l-cyan-500',    avatar: 'bg-cyan-500/20 text-cyan-300' }
+  if (r.match(/business|professional/))     return { border: 'border-l-blue-500',    avatar: 'bg-blue-500/20 text-blue-300' }
+  if (r.match(/helpful|friendly|support/))  return { border: 'border-l-emerald-500', avatar: 'bg-emerald-500/20 text-emerald-300' }
+  if (r.match(/creative|inventive/))        return { border: 'border-l-pink-500',    avatar: 'bg-pink-500/20 text-pink-300' }
+  if (r.match(/sales|persuasive/))          return { border: 'border-l-orange-500',  avatar: 'bg-orange-500/20 text-orange-300' }
+  if (r.match(/analyst|data/))              return { border: 'border-l-violet-500',  avatar: 'bg-violet-500/20 text-violet-300' }
   return { border: 'border-l-white/20', avatar: 'bg-white/10 text-white/50' }
 }
 
@@ -46,7 +44,10 @@ export function AgentCard({ agent, onDelete }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const role = (agent.setupAnswers as Record<string, string> | null)?.['Business type / role'] ?? ''
+  const role =
+    (agent.setupAnswers as Record<string, string> | null)?.['Personality selection']
+    ?? (agent.setupAnswers as Record<string, string> | null)?.['Business type / role']
+    ?? ''
   const colors = getRoleColors(role)
   const isActive = agent.status !== 'setting_up' && agent.status !== 'offline'
 
@@ -54,9 +55,9 @@ export function AgentCard({ agent, onDelete }: Props) {
   const description = (() => {
     if (!agent.setupAnswers) return role
     const answers = agent.setupAnswers as Record<string, string>
-    // Skip the role field, pick the first substantive answer
+    // Skip role/personality fields, pick the first substantive answer
     const key = Object.keys(answers).find(
-      (k) => k !== 'Business type / role' && answers[k]?.trim()
+      (k) => k !== 'Business type / role' && k !== 'Personality selection' && answers[k]?.trim()
     )
     return key ? answers[key] : role
   })()

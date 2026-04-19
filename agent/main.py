@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import anthropic
 from dotenv import load_dotenv
@@ -33,6 +33,119 @@ app.add_middleware(
 
 MODEL = "claude-sonnet-4-20250514"
 MAX_HISTORY = 10
+
+
+MANAGER_ROUTER_PROMPT = """You are the Manager Agent in a multi-agent system.
+Your job is to choose the best worker based on business context and the latest user message.
+
+Workers:
+- booking: use when the user wants to schedule/book/reschedule/cancel an appointment.
+- customer: use when the user asks about a customer, their preferences, or memory/profile details.
+- general: everything else.
+
+Return ONLY compact JSON:
+{"route":"booking|customer|general","reason":"short reason"}
+"""
+
+
+def _split_business_context(memory: str) -> tuple[str, str]:
+    """Extract leading business context block from memory when present."""
+    marker = "Business context:"
+    if not memory or not memory.strip().startswith(marker):
+        return "", memory
+
+    parts = memory.split("\n\n", 1)
+    business_context = parts[0].strip()
+    remaining_memory = parts[1].strip() if len(parts) > 1 else ""
+    return business_context, remaining_memory
+
+
+def _manager_route(
+    client: anthropic.Anthropic,
+    business_context: str,
+    message: str,
+    history: list[Any],
+) -> Literal["booking", "customer", "general"]:
+    recent_history = history[-3:] if len(history) > 3 else history
+    history_text = "\n".join(f"{m.role}: {m.content}" for m in recent_history)
+    manager_input = (
+        f"Business Context:\n{business_context or '(none)'}\n\n"
+        f"Recent conversation:\n{history_text or '(none)'}\n\n"
+        f"Latest user message:\n{message}"
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=80,
+            system=MANAGER_ROUTER_PROMPT,
+            messages=[
+                {"role": "user", "content": manager_input},
+            ],
+        )
+        raw = "".join(block.text for block in response.content if hasattr(block, "text")).strip()
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            payload = json.loads(raw[start:end])
+            route = payload.get("route", "general")
+            if route in ("booking", "customer", "general"):
+                return route
+    except Exception:
+        pass
+
+    text = message.lower()
+    if any(k in text for k in ["book", "schedule", "appointment", "reschedule", "cancel", "remind", "reminder"]):
+        return "booking"
+    if any(k in text for k in ["customer", "preference", "memory", "likes", "dislikes", "profile"]):
+        return "customer"
+    return "general"
+
+
+def _worker_prompt_suffix(route: Literal["booking", "customer", "general"], business_context: str) -> str:
+    common = (
+        "\n\nManager routing active. You are a worker in a multi-agent setup.\n"
+        "Always acknowledge the current time and schedule from Business Context in your reply before any other details.\n"
+        "Do not claim you executed a tool unless the tool result is present in conversation context.\n"
+    )
+    context_block = f"\nBusiness Context:\n{business_context}\n" if business_context else ""
+
+    if route == "booking":
+        return (
+            common
+            + context_block
+            + "Worker: Booking Specialist.\n"
+            + "Use save_event tool (or manage_booking alias) to create appointments. REQUIRED DETAILS BEFORE CALLING THE TOOL:\n"
+            + "  - customer_name: Full name of the customer\n"
+            + "  - customer_email: Customer's email address\n"
+            + "  - start_time: Specific time converted to strict ISO 8601 UTC (YYYY-MM-DDTHH:MM:SSZ)\n"
+            + "  - category: infer and pass one of business|chore|personal\n"
+            + "If any required detail is missing, ask for it first before calling the tool.\n"
+            + "Do not guess date math yourself. Pass the user's time phrase to the tool for normalization when needed.\n"
+            + "Interpret words like 'today', 'tomorrow', and weekdays in the local timezone context; do not shift days using UTC assumptions.\n"
+            + "If the user gives an ambiguous time like 'at 2', ask AM/PM before booking.\n"
+            + "Category rules:\n"
+            + "  - If user mentions a client name or a service (for example 'haircut'), set category='business'.\n"
+            + "  - If user mentions tasks like 'walk the dog' or 'pick up milk', set category='chore'.\n"
+            + "  - Otherwise set category='personal'.\n"
+            + "If an eventTypeId is ever used in the booking flow, it must be a literal integer (for example, 123456), never a string.\n"
+            + "Do NOT invent or assume parameters — always ask if needed.\n"
+            + "After booking, explicitly confirm the event type shown in the tool result so the user knows the right Cal event type was used.\n"
+        )
+    if route == "customer":
+        return (
+            common
+            + context_block
+            + "Worker: Customer Memory Specialist.\n"
+            + "If asked about a customer or preferences, use search_customer_memories tool first.\n"
+            + "Summarize returned memory rows clearly and mention uncertainty when data is missing.\n"
+        )
+    return (
+        common
+        + context_block
+        + "Worker: General Assistant.\n"
+        + "Use tools when needed, but prioritize direct, concise help.\n"
+    )
 
 
 def get_client() -> anthropic.Anthropic:
@@ -91,6 +204,7 @@ class InitializeMemoryRequest(BaseModel):
 
 
 class UpdateMemoryRequest(BaseModel):
+    agent_id: str = ""
     agent_name: str
     current_memory: str
     conversation: str
@@ -130,7 +244,7 @@ def run_tool_use_loop(
     messages: list[dict],
     tools: list[dict],
     integrations: dict,
-) -> list[dict]:
+) -> tuple[list[dict], list[Any]]:
     """
     Run the tool use loop until Claude stops requesting tools.
     Returns the final messages list with tool results appended.
@@ -145,8 +259,8 @@ def run_tool_use_loop(
         )
 
         if response.stop_reason != "tool_use":
-            # No more tool calls — done
-            return messages
+            # No more tool calls — return the final Claude response content.
+            return messages, list(response.content)
 
         # Execute client-side tool calls (skip native tools like web_search — Anthropic runs those)
         tool_results = []
@@ -160,9 +274,9 @@ def run_tool_use_loop(
                 })
 
         # If all tool calls were native (web_search), there's nothing for us to execute.
-        # Break to avoid an infinite loop — the next stream call will handle the response.
+        # Return the current response content so the caller can surface Claude's final answer.
         if not tool_results:
-            break
+            return messages, list(response.content)
 
         # Append assistant response + our tool results to messages
         messages = messages + [
@@ -184,7 +298,15 @@ async def stream_chat(
     client = get_client()
     # Inject agent identity into integrations so browse_website can log activity
     enriched_integrations = {**integrations, "agent_id": agent_id, "agent_name": agent_name}
-    system_prompt = build_system_prompt(agent_name, setup_answers, memory, files or [], enriched_integrations)
+    business_context, memory_without_context = _split_business_context(memory)
+    route = _manager_route(client, business_context, message, history)
+    system_prompt = build_system_prompt(
+        agent_name,
+        setup_answers,
+        memory_without_context,
+        files or [],
+        enriched_integrations,
+    ) + _worker_prompt_suffix(route, business_context)
     tools = get_available_tools(enriched_integrations)
 
     recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
@@ -192,8 +314,19 @@ async def stream_chat(
     messages.append({"role": "user", "content": message})
 
     # Handle tool use loop (non-streaming) if tools are available
+    final_content = None
     if tools:
-        messages = run_tool_use_loop(client, system_prompt, messages, tools, enriched_integrations)
+        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, enriched_integrations)
+
+    if final_content is not None:
+        emitted_text = False
+        for block in final_content:
+            if hasattr(block, "text"):
+                emitted_text = True
+                yield f"data: {json.dumps({'delta': block.text})}\n\n"
+        if emitted_text:
+            yield "data: [DONE]\n\n"
+            return
 
     # Stream final response
     with client.messages.stream(
@@ -234,8 +367,19 @@ async def stream_group_chat(
 
     messages: list[dict] = [{"role": "user", "content": message}]
 
+    final_content = None
     if tools:
-        messages = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
+        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
+
+    if final_content is not None:
+        emitted_text = False
+        for block in final_content:
+            if hasattr(block, "text"):
+                emitted_text = True
+                yield f"data: {json.dumps({'delta': block.text})}\n\n"
+        if emitted_text:
+            yield "data: [DONE]\n\n"
+            return
 
     with client.messages.stream(
         model=MODEL,

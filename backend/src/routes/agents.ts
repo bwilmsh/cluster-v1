@@ -19,6 +19,87 @@ function getPythonUrl() {
   return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 }
 
+type UpcomingAppointment = {
+  id: number
+  start_time: string
+  end_time: string
+  status: string
+  customer_id?: number
+}
+
+async function getBusinessContext(): Promise<string> {
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const humanNow = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(now)
+
+  const supabaseUrl = process.env.SUPABASE_URL
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseKey) {
+    return [
+      'Business context:',
+      `- Current time (ISO): ${nowIso}`,
+      `- Current local time: ${humanNow}`,
+      '- Upcoming appointments: unavailable (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY)',
+    ].join('\n')
+  }
+
+  try {
+    const query = new URLSearchParams({
+      select: 'id,start_time,end_time,status,customer_id',
+      start_time: `gte.${nowIso}`,
+      order: 'start_time.asc',
+      limit: '3',
+    })
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/appointments?${query.toString()}`, {
+      method: 'GET',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        Accept: 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      return [
+        'Business context:',
+        `- Current time (ISO): ${nowIso}`,
+        `- Current local time: ${humanNow}`,
+        `- Upcoming appointments: unavailable (Supabase error ${response.status}: ${errorText.slice(0, 200)})`,
+      ].join('\n')
+    }
+
+    const appointments = (await response.json()) as UpcomingAppointment[]
+    const lines = appointments.length
+      ? appointments.map((appt, idx) => (
+          `- ${idx + 1}. ${appt.start_time} to ${appt.end_time} | status: ${appt.status} | appointment_id: ${appt.id}`
+        ))
+      : ['- None in the next window.']
+
+    return [
+      'Business context:',
+      `- Current time (ISO): ${nowIso}`,
+      `- Current local time: ${humanNow}`,
+      '- Next 3 upcoming appointments:',
+      ...lines,
+    ].join('\n')
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'Unknown error'
+    return [
+      'Business context:',
+      `- Current time (ISO): ${nowIso}`,
+      `- Current local time: ${humanNow}`,
+      `- Upcoming appointments: unavailable (${reason})`,
+    ].join('\n')
+  }
+}
+
 // Mount file routes under /api/agents/:id/files
 agentsRouter.use('/:id/files', filesRouter)
 
@@ -66,6 +147,25 @@ agentsRouter.post('/generate-questions', async (req: Request, res: Response) => 
     res.json(data)
   } catch (err) {
     res.status(502).json({ error: 'Python service unavailable' })
+  }
+})
+
+// GET /api/agents/memory/by-name?name=AgentName  — explicit cross-agent memory read
+agentsRouter.get('/memory/by-name', async (req: Request, res: Response) => {
+  try {
+    const rawName = String(req.query.name ?? '').trim()
+    if (!rawName) return res.status(400).json({ error: 'name query parameter is required' })
+
+    const user = await getDefaultUser()
+    const agent = await prisma.agent.findFirst({
+      where: { userId: user.id, name: rawName },
+      select: { id: true, name: true, memory: true },
+    })
+
+    if (!agent) return res.status(404).json({ error: 'Agent not found' })
+    res.json(agent)
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -158,6 +258,9 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
     getUserIntegrationTokens(user.id),
   ])
 
+  const business_context = await getBusinessContext()
+  const memoryWithBusinessContext = `${business_context}\n\n${agent.memory ?? ''}`.trim()
+
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -178,7 +281,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
         agent_name: agent.name,
         agent_id: agent.id,
         setup_answers: agent.setupAnswers ?? {},
-        memory: agent.memory ?? '',
+        memory: memoryWithBusinessContext,
         history: history.slice(0, -1),
         message,
         integrations: integrationTokens,
@@ -223,22 +326,33 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
 
       // Fire-and-forget memory update
       const recentTurn = `user: ${message}\nassistant: ${fullContent}`
-      fetch(`${getPythonUrl()}/update-memory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent_name: agent.name,
-          current_memory: agent.memory ?? '',
-          conversation: recentTurn,
-        }),
-      })
-        .then((r) => r.json())
-        .then(({ memory: updatedMemory }) => {
+      ;(async () => {
+        try {
+          const latestAgent = await prisma.agent.findUnique({
+            where: { id },
+            select: { id: true, name: true, memory: true },
+          })
+          if (!latestAgent) return
+
+          const updateResponse = await fetch(`${getPythonUrl()}/update-memory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent_id: latestAgent.id,
+              agent_name: latestAgent.name,
+              current_memory: latestAgent.memory ?? '',
+              conversation: recentTurn,
+            }),
+          })
+
+          const { memory: updatedMemory } = await updateResponse.json()
           if (updatedMemory) {
-            return prisma.agent.update({ where: { id }, data: { memory: updatedMemory } })
+            await prisma.agent.update({ where: { id: latestAgent.id }, data: { memory: updatedMemory } })
           }
-        })
-        .catch(() => {})
+        } catch {
+          // best-effort memory update only
+        }
+      })()
     }
     res.end()
   }

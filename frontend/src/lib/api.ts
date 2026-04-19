@@ -245,6 +245,79 @@ export const api = {
     activity: (): Promise<BrowseActivity[]> =>
       fetch(`${BASE}/browse/activity`).then((r) => r.json()).then((d) => safeArray<BrowseActivity>(d)),
   },
+
+  ap: {
+    status: (): Promise<APStatus> =>
+      fetch(`${BASE}/activepieces/status`).then((r) => r.json()),
+
+    flows: (): Promise<APFlow[]> =>
+      fetch(`${BASE}/activepieces/flows`)
+        .then((r) => r.json())
+        .then((d: APFlowsResponse | { error: string }) => {
+          if ('error' in d) return []
+          return d.data ?? []
+        }),
+
+    toggle: (id: string): Promise<APFlow> =>
+      fetch(`${BASE}/activepieces/flows/${id}/toggle`, { method: 'POST' }).then((r) => r.json()),
+
+    run: (id: string): Promise<APRun | { error: string }> =>
+      fetch(`${BASE}/activepieces/flows/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+
+    runs: (id: string): Promise<APRun[]> =>
+      fetch(`${BASE}/activepieces/flows/${id}/runs`)
+        .then((r) => r.json())
+        .then((d: { data: APRun[] } | { error: string }) => {
+          if ('error' in d) return []
+          return d.data ?? []
+        }),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/activepieces/flows/${id}`, { method: 'DELETE' }).then(() => undefined),
+  },
+
+  workflows: {
+    list: (): Promise<Workflow[]> =>
+      fetch(`${BASE}/workflows`).then((r) => r.json()).then((d) => safeArray<Workflow>(d)),
+
+    get: (id: string): Promise<Workflow> =>
+      fetch(`${BASE}/workflows/${id}`).then((r) => r.json()),
+
+    create: (data: {
+      name: string
+      description?: string
+      nodes: WorkflowNode[]
+      edges: WorkflowEdge[]
+      status?: string
+    }): Promise<Workflow> =>
+      fetch(`${BASE}/workflows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    update: (id: string, data: Partial<{
+      name: string
+      description: string
+      nodes: WorkflowNode[]
+      edges: WorkflowEdge[]
+      status: string
+    }>): Promise<Workflow> =>
+      fetch(`${BASE}/workflows/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/workflows/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+    run: (id: string): Promise<{ message: string }> =>
+      fetch(`${BASE}/workflows/${id}/run`, { method: 'POST' }).then((r) => r.json()),
+
+    runs: (id: string): Promise<WorkflowRun[]> =>
+      fetch(`${BASE}/workflows/${id}/runs`).then((r) => r.json()).then((d) => safeArray<WorkflowRun>(d)),
+  },
 }
 
 export interface WebCredential {
@@ -330,4 +403,91 @@ export interface BrowseActivity {
   domain: string
   summary: string | null
   createdAt: string
+}
+
+// ─── Workflow types ────────────────────────────────────────────────────────────
+
+export type WorkflowNodeType =
+  | 'trigger'
+  | 'check'
+  | 'action'
+  | 'notify'
+  | 'decision'
+  | 'memory_read'
+  | 'memory_write'
+
+export interface WorkflowNodeData {
+  label: string
+  capability?: string | null
+  parameters?: Record<string, unknown>
+}
+
+export interface WorkflowNode {
+  id: string
+  type: WorkflowNodeType
+  position: { x: number; y: number }
+  data: WorkflowNodeData
+}
+
+export interface WorkflowEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+}
+
+export interface Workflow {
+  id: string
+  userId: string
+  name: string
+  description: string | null
+  nodes: WorkflowNode[]
+  edges: WorkflowEdge[]
+  status: 'draft' | 'active' | 'paused'
+  lastRunAt: string | null
+  lastRunStatus: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowRun {
+  id: string
+  workflowId: string
+  startedAt: string
+  completedAt: string | null
+  status: 'running' | 'success' | 'failed'
+  result: string | null
+}
+
+// ─── Activepieces types ───────────────────────────────────────────────────────
+
+export interface APStatus {
+  configured: boolean
+  reason?: 'no_credentials' | 'unreachable'
+  detail?: string
+  projectId?: string
+}
+
+export interface APFlow {
+  id: string
+  displayName: string
+  status: 'ENABLED' | 'DISABLED'
+  publishedVersionId: string | null
+  created: string
+  updated: string
+}
+
+export interface APFlowsResponse {
+  data: APFlow[]
+  next: string | null
+  previous: string | null
+}
+
+export interface APRun {
+  id: string
+  flowId: string
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMEOUT' | 'INTERNAL_ERROR' | 'STOPPED' | 'SKIPPED'
+  startTime: string
+  finishTime: string | null
+  logsFileId: string | null
 }

@@ -1,207 +1,438 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
-import Link from 'next/link'
-import { api, Agent, Widget } from '@/lib/api'
-import { AgentCard } from '@/components/AgentCard'
-import { WidgetRenderer } from '@/components/WidgetRenderer'
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { api, Agent } from '@/lib/api'
 
-// ─── Widget Card ─────────────────────────────────────────────────────────────
+const AGENT_COLORS = [
+  '#6366f1',
+  '#22c55e',
+  '#f59e0b',
+  '#ec4899',
+  '#14b8a6',
+  '#f97316',
+  '#8b5cf6',
+  '#06b6d4',
+]
 
-function sizeClass(size: Widget['size']) {
-  if (size === 'sm') return 'col-span-1'
-  if (size === 'lg') return 'col-span-2 sm:col-span-3'
-  return 'col-span-1 sm:col-span-2'
+const CHIPS = [
+  'Summarise a document',
+  'Draft an email',
+  'Help me plan a campaign',
+  '@mention an agent',
+]
+
+function getColor(index: number): string {
+  return AGENT_COLORS[index % AGENT_COLORS.length]
 }
 
-function heightClass(size: Widget['size']) {
-  if (size === 'sm') return 'h-36'
-  if (size === 'lg') return 'h-64'
-  return 'h-48'
-}
-
-interface WidgetCardProps {
-  widget: Widget
-  onDelete: (id: string) => void
-  onDragStart: (id: string) => void
-  onDragOver: (id: string) => void
-  onDrop: () => void
-  isDragging: boolean
-}
-
-function WidgetCard({ widget, onDelete, onDragStart, onDragOver, onDrop, isDragging }: WidgetCardProps) {
-  return (
-    <div
-      draggable
-      onDragStart={() => onDragStart(widget.id)}
-      onDragOver={(e) => { e.preventDefault(); onDragOver(widget.id) }}
-      onDrop={onDrop}
-      className={`
-        ${sizeClass(widget.size)} ${heightClass(widget.size)}
-        relative group bg-white/[0.03] border border-white/8 rounded-2xl p-4 cursor-grab active:cursor-grabbing
-        transition-opacity ${isDragging ? 'opacity-30' : 'opacity-100'}
-      `}
-    >
-      <div className="flex items-start justify-between mb-3">
-        <h3 className="text-white/60 text-xs font-medium uppercase tracking-wide truncate pr-2">{widget.title}</h3>
-        <button
-          onClick={() => onDelete(widget.id)}
-          className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-white/70 transition-all flex-shrink-0 text-lg leading-none -mt-0.5"
-        >
-          ×
-        </button>
-      </div>
-      <div className="overflow-hidden" style={{ height: 'calc(100% - 2rem)' }}>
-        <WidgetRenderer widget={widget} />
-      </div>
-    </div>
-  )
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
-export default function DashboardPage() {
+export default function HomePage() {
+  const router = useRouter()
   const [agents, setAgents] = useState<Agent[]>([])
-  const [widgets, setWidgets] = useState<Widget[]>([])
-  const [loading, setLoading] = useState(true)
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+  const [message, setMessage] = useState('')
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
 
-  const dragId = useRef<string | null>(null)
-  const dragOverId = useRef<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    Promise.all([api.agents.list(), api.widgets.list()])
-      .then(([a, w]) => {
-        const agentList = Array.isArray(a) ? a : (a as { agents?: Agent[]; data?: Agent[] })?.agents ?? (a as { agents?: Agent[]; data?: Agent[] })?.data ?? []
-        const widgetList = Array.isArray(w) ? w : (w as { widgets?: Widget[]; data?: Widget[] })?.widgets ?? (w as { widgets?: Widget[]; data?: Widget[] })?.data ?? []
-        setAgents(agentList)
-        setWidgets(widgetList)
+    api.agents
+      .list()
+      .then((list) => {
+        const agents = Array.isArray(list) ? list : []
+        setAgents(agents)
+        if (agents.length > 0) setSelectedAgent(agents[0])
       })
-      .finally(() => setLoading(false))
+      .catch(() => {})
   }, [])
 
-  async function handleDeleteAgent(id: string) {
-    if (!confirm('Remove this agent?')) return
-    await api.agents.delete(id)
-    setAgents((prev) => prev.filter((a) => a.id !== id))
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value
+    setMessage(val)
+    const cursor = e.target.selectionStart ?? val.length
+    const before = val.slice(0, cursor)
+    const m = before.match(/@(\w*)$/)
+    setMentionQuery(m ? m[1] : null)
   }
 
-  async function handleDeleteWidget(id: string) {
-    await api.widgets.delete(id)
-    setWidgets((prev) => prev.filter((w) => w.id !== id))
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      setMentionQuery(null)
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
   }
 
-  function handleDragStart(id: string) { dragId.current = id }
-  function handleDragOver(id: string) { dragOverId.current = id }
-
-  async function handleDrop() {
-    const fromId = dragId.current
-    const toId = dragOverId.current
-    dragId.current = null
-    dragOverId.current = null
-    if (!fromId || !toId || fromId === toId) return
-
-    const reordered = [...widgets]
-    const fromIdx = reordered.findIndex((w) => w.id === fromId)
-    const toIdx = reordered.findIndex((w) => w.id === toId)
-    const [moved] = reordered.splice(fromIdx, 1)
-    reordered.splice(toIdx, 0, moved)
-
-    const withOrder = reordered.map((w, i) => ({ ...w, order: i }))
-    setWidgets(withOrder)
-    await api.widgets.reorder(withOrder.map((w) => ({ id: w.id, order: w.order })))
+  const handleSend = () => {
+    const trimmed = message.trim()
+    if (!trimmed || !selectedAgent) return
+    // Store the initial message for the agent page to auto-send
+    sessionStorage.setItem(`agent-init-${selectedAgent.id}`, trimmed)
+    router.push(`/agents/${selectedAgent.id}`)
   }
+
+  const handleMentionSelect = (agent: Agent) => {
+    const ta = textareaRef.current
+    const cursor = ta?.selectionStart ?? message.length
+    const before = message.slice(0, cursor)
+    const m = before.match(/@(\w*)$/)
+    if (m) {
+      const replaced = before.slice(0, before.length - m[0].length) + `@${agent.name} `
+      setMessage(replaced + message.slice(cursor))
+    }
+    setMentionQuery(null)
+    setSelectedAgent(agent)
+    ta?.focus()
+  }
+
+  const agentIndex = selectedAgent ? agents.findIndex((a) => a.id === selectedAgent.id) : -1
+  const selectedColor = agentIndex >= 0 ? getColor(agentIndex) : '#6366f1'
+
+  const mentionAgents =
+    mentionQuery !== null
+      ? agents.filter((a) => a.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      : []
+
+  const canSend = message.trim().length > 0 && selectedAgent !== null
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-8 max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-xl font-semibold text-white">Dashboard</h1>
-            <p className="text-white/30 text-sm mt-0.5">
-              {loading ? '' : `${agents.length} agent${agents.length !== 1 ? 's' : ''} active`}
-            </p>
-          </div>
-          <Link
-            href="/cluster"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/20 text-sm transition-colors"
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '0 24px',
+        backgroundColor: 'var(--bg-primary)',
+      }}
+    >
+      {/* Heading */}
+      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+        <h1
+          style={{
+            fontSize: '26px',
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            letterSpacing: '-0.02em',
+            margin: '0 0 8px',
+          }}
+        >
+          What can I help with?
+        </h1>
+        <p style={{ fontSize: '14px', color: 'var(--text-tertiary)', margin: 0 }}>
+          Chat with an agent or @mention one to get started
+        </p>
+      </div>
+
+      {/* Input area */}
+      <div style={{ width: '100%', maxWidth: '640px', position: 'relative' }}>
+        {/* @mention autocomplete popup */}
+        {mentionQuery !== null && mentionAgents.length > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 8px)',
+              left: 0,
+              width: '240px',
+              backgroundColor: 'var(--bg-secondary)',
+              border: '0.5px solid var(--border)',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              zIndex: 50,
+            }}
           >
-            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
-              <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd" />
-            </svg>
-            Ask Cluster
-          </Link>
-        </div>
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-white/25 text-sm py-12">
-            <span className="w-1.5 h-1.5 bg-white/25 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1.5 h-1.5 bg-white/25 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1.5 h-1.5 bg-white/25 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            {mentionAgents.map((agent) => {
+              const idx = agents.findIndex((a) => a.id === agent.id)
+              return (
+                <button
+                  key={agent.id}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    handleMentionSelect(agent)
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    width: '100%',
+                    padding: '8px 12px',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                    border: 'none',
+                    textAlign: 'left',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                >
+                  <span
+                    style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: getColor(idx),
+                      flexShrink: 0,
+                      display: 'inline-block',
+                    }}
+                  />
+                  {agent.name}
+                </button>
+              )
+            })}
           </div>
-        ) : (
-          <>
-            {/* Widget grid */}
-            {widgets.length > 0 ? (
-              <div className="mb-10">
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-min">
-                  {widgets.map((w) => (
-                    <WidgetCard
-                      key={w.id}
-                      widget={w}
-                      onDelete={handleDeleteWidget}
-                      onDragStart={handleDragStart}
-                      onDragOver={handleDragOver}
-                      onDrop={handleDrop}
-                      isDragging={dragId.current === w.id}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="mb-10 rounded-2xl border border-dashed border-white/8 py-10 text-center">
-                <p className="text-white/25 text-sm mb-2">No dashboard widgets yet</p>
-                <Link
-                  href="/cluster"
-                  className="text-white/40 hover:text-white/70 text-sm transition-colors"
-                >
-                  Ask Cluster to build your dashboard →
-                </Link>
-              </div>
-            )}
+        )}
 
-            {/* Agents section */}
-            <div>
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest">Your Agents</h2>
-                <Link
-                  href="/agents/new"
-                  className="text-xs text-white/40 hover:text-white/70 transition-colors"
-                >
-                  + Hire new
-                </Link>
-              </div>
+        {/* Main input box */}
+        <div
+          style={{
+            backgroundColor: 'var(--bg-tertiary)',
+            border: '0.5px solid var(--border)',
+            borderRadius: '14px',
+            padding: '14px 16px',
+          }}
+        >
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Message or @mention an agent..."
+            rows={3}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              resize: 'none',
+              outline: 'none',
+              border: 'none',
+              color: 'var(--text-primary)',
+              caretColor: 'var(--accent)',
+              fontSize: '14px',
+              lineHeight: '1.5',
+              fontFamily: 'inherit',
+            }}
+          />
 
-              {agents.length === 0 ? (
-                <div className="text-center py-16 rounded-2xl border border-dashed border-white/8">
-                  <p className="text-white/25 text-sm mb-4">No agents hired yet</p>
-                  <Link
-                    href="/agents/new"
-                    className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
-                  >
-                    Hire your first agent
-                  </Link>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {agents.map((agent) => (
-                    <AgentCard key={agent.id} agent={agent} onDelete={handleDeleteAgent} />
-                  ))}
+          {/* Bottom row */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: '8px',
+            }}
+          >
+            {/* Agent picker */}
+            <div ref={dropdownRef} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setDropdownOpen((o) => !o)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  backgroundColor: dropdownOpen ? 'var(--bg-hover)' : 'transparent',
+                  color: 'var(--text-secondary)',
+                  fontSize: '13px',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  if (!dropdownOpen) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+                }}
+                onMouseLeave={(e) => {
+                  if (!dropdownOpen) e.currentTarget.style.backgroundColor = 'transparent'
+                }}
+              >
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: selectedColor,
+                    flexShrink: 0,
+                    display: 'inline-block',
+                  }}
+                />
+                <span
+                  style={{
+                    maxWidth: '140px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {selectedAgent ? selectedAgent.name : 'Select an agent'}
+                </span>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <path
+                    d="M2 4L5 7L8 4"
+                    stroke="currentColor"
+                    strokeWidth="1.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+
+              {/* Dropdown */}
+              {dropdownOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 4px)',
+                    left: 0,
+                    minWidth: '200px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: '0.5px solid var(--border)',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    zIndex: 50,
+                  }}
+                >
+                  {agents.length === 0 ? (
+                    <div
+                      style={{ padding: '10px 12px', color: 'var(--text-tertiary)', fontSize: '13px' }}
+                    >
+                      No agents yet
+                    </div>
+                  ) : (
+                    agents.map((agent, idx) => {
+                      const isSelected = selectedAgent?.id === agent.id
+                      return (
+                        <button
+                          key={agent.id}
+                          onClick={() => {
+                            setSelectedAgent(agent)
+                            setDropdownOpen(false)
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            width: '100%',
+                            padding: '8px 12px',
+                            color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                            backgroundColor: isSelected ? 'var(--bg-hover)' : 'transparent',
+                            fontSize: '13px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                          }}
+                          onMouseEnter={(e) =>
+                            (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')
+                          }
+                          onMouseLeave={(e) =>
+                            (e.currentTarget.style.backgroundColor = isSelected
+                              ? 'var(--bg-hover)'
+                              : 'transparent')
+                          }
+                        >
+                          <span
+                            style={{
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              backgroundColor: getColor(idx),
+                              flexShrink: 0,
+                              display: 'inline-block',
+                            }}
+                          />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 500 }}>{agent.name}</div>
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               )}
             </div>
-          </>
-        )}
+
+            {/* Send button */}
+            <button
+              onClick={handleSend}
+              disabled={!canSend}
+              style={{
+                width: '30px',
+                height: '30px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--accent)',
+                opacity: canSend ? 1 : 0.4,
+                cursor: canSend ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: 'none',
+                flexShrink: 0,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M7 11V3M7 3L4 6M7 3L10 6"
+                  stroke="white"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Suggestion chips */}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            marginTop: '12px',
+            justifyContent: 'center',
+          }}
+        >
+          {CHIPS.map((chip) => (
+            <button
+              key={chip}
+              onClick={() => {
+                setMessage(chip)
+                textareaRef.current?.focus()
+              }}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '0.5px solid var(--border)',
+                borderRadius: '20px',
+                color: 'var(--text-secondary)',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-secondary)')}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )

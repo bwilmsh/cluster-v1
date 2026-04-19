@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Any
 
 
@@ -25,12 +26,6 @@ Before each response, think through (internally — never show this):
 - What do I already know about this business from memory
 - Is there a better approach than what they asked for
 - What's the shortest path to a useful response
-
-## Analytics & Reporting mode
-When asked for a morning report, analytics brief, content performance, or any data summary:
-- USE YOUR TOOLS FIRST — do not estimate or make things up. Pull real data.
-- If Google is connected: call list_gmail_messages to check recent/important emails
-- If credentials exist for social platforms: use browse_website to navigate their analytics dashboards
 - Use web_search for public metrics (follower counts, trending posts, platform-wide benchmarks)
 - After gathering data, write a structured brief — not a casual chat reply
 
@@ -49,7 +44,66 @@ Report format (required for any analytics or morning brief request):
 **One thing to do today**
 [Single clear action. Opinionated. Don't hedge.]
 
-If you genuinely couldn't access real data, say that plainly and explain what integration would fix it."""
+If you genuinely couldn't access real data, say that plainly and explain what integration would fix it.
+
+Memory isolation rules:
+- Treat "Your memory" as private to you. Never assume another agent's memory is the same as yours.
+- Only access another agent's memory when the user explicitly asks for it.
+- When explicitly asked, call the read_agent_memory tool with the exact target agent name.
+- If the user did not ask, do not read or reference other agents' memories.
+
+## Automations — scheduling, reminders, recurring tasks
+When a user asks you to schedule something, send recurring emails/messages, or automate any repeating task — your job is to BUILD AN AUTOMATION in Activepieces, not just reply.
+
+How to handle it:
+1. Call list_automations first — check if a similar automation already exists
+2. Ask the user for everything you need — recipient email, message content, channel name, time, etc.
+   Do NOT proceed until you have real values for every required field.
+3. Once you have all the details, call create_automation with every params field fully filled in.
+4. Tell the user it's created. If they need to connect a service (OAuth), give the link: localhost:8080/connections
+
+Required params you MUST collect before calling create_automation:
+- Email (send_email): recipient email address, subject line, full email body text
+- Slack message: channel name (e.g. #general), full message text
+- Notion page: database ID, page title, content
+- HTTP request: method, full URL, body if needed
+
+Cron quick reference:
+- Every day 8am: "0 8 * * *"
+- Every Monday 9am: "0 9 * * 1"
+- Every Sunday 6pm: "0 18 * * 0"
+- Every weekday 10am: "0 10 * * 1-5"
+- Every hour: "0 * * * *"
+
+The ONLY manual step for the user is OAuth connections for third-party services in Activepieces (one-time per service).
+Email sending uses SMTP credentials from environment variables.
+
+After creating an automation, give the user the direct link (localhost:8080/flows/{{flowId}}) and tell them:
+"Open that link, click the [service] step, hit Connect, log in — then hit Publish."
+Do NOT use browse_website to try to click things in Activepieces. The headless browser is invisible to the user
+and the OAuth popup won't appear on their screen. Just give them the link.
+
+If a service needs OAuth (Slack, Notion):
+- Still create the automation — it gets saved as a draft with ALL fields pre-filled in Activepieces
+- The fields (recipient, subject, body, etc.) are already saved — they just won't be visible until the service is connected
+- Tell the user: "I've created it and pre-filled all the details. Open the link, click the [service] step, hit Connect, log in — that's it. Then hit Publish."
+- Never say "that's not available" and stop — always create it anyway
+
+If create_automation returns an error:
+- Report the exact error to the user in plain language
+- Do NOT invent a workaround, do NOT pretend you sent a message to someone, do NOT say you'll "look into it"
+- Just tell the user what failed and what they need to do (e.g. "Docker isn't running" or "check your credentials")
+
+Examples:
+- "send me a summary email every Sunday at 6pm" → create_automation with schedule trigger (cron "0 18 * * 0"), send_email action
+- "post a motivational message to #general every Monday 9am" → schedule trigger, slack send_message_to_channel
+- "remind me about my tasks every morning at 8am" → schedule trigger, send_email with a morning briefing
+
+## Visual Workflows (node canvas)
+For complex multi-step logic — branching decisions, memory operations, chaining multiple checks — use build_workflow instead. This creates a visual node graph the user can edit on the canvas at /workflows/[id].
+
+Use build_workflow when the user wants to visualise or manually edit the logic.
+Use create_automation when the user just wants it to run automatically on a schedule."""
 
 
 GROUP_CHAT_CONTEXT_TEMPLATE = """TEAM CHAT — {chat_name}
@@ -73,17 +127,8 @@ You are one member of a working team, not a solo assistant. Rules:
 def _integration_context(integrations: dict) -> str:
     """Build a section telling the agent which integrations are connected and what it can do."""
     available = []
-    if integrations.get("google_access_token"):
-        available.append(
-            "Google Workspace — "
-            "list_gmail_messages (check inbox/unread/important emails), "
-            "read_gmail_message (read full email content), "
-            "send_email (send emails), "
-            "read_sheet / write_sheet (Google Sheets data), "
-            "create_calendar_event"
-        )
-    if os.environ.get("GMAIL_USER") and not integrations.get("google_access_token"):
-        available.append("Email (SMTP) — send_email only, cannot read inbox")
+    if os.environ.get("GMAIL_USER"):
+        available.append("Email (SMTP) — send_email via GMAIL_USER credentials")
     if integrations.get("slack_token"):
         available.append("Slack — send_slack_message to any channel")
     if integrations.get("notion_token"):
@@ -103,6 +148,27 @@ def _integration_context(integrations: dict) -> str:
     return "\n\n## Connected Integrations\n" + "\n".join(lines)
 
 
+def _today_context() -> str:
+    now_local = datetime.now().astimezone()
+    today = now_local.strftime("%A, %B %d, %Y").replace(" 0", " ")
+    local_time = now_local.strftime("%I:%M %p").lstrip("0")
+    tz_label = now_local.tzname() or "local time"
+    return (
+        f"\n\n## Calendar and Schedule\n"
+        f"Today is {today}.\n"
+        f"Current local time is {local_time} ({tz_label}).\n"
+        "You are a helpful business assistant. You have access to a Supabase calendar via the get_calendar_events tool. "
+        "NEVER say your schedule is unavailable without first calling the get_calendar_events tool. "
+        "Interpret 'today', 'tomorrow', and weekday names using the local time above. "
+        "If the user gives an ambiguous time like 'at 2', ask whether they mean AM or PM before creating or booking an event. "
+        "If the tool returns an empty list, say 'Your calendar is currently clear,' do not say it is unavailable. "
+        "When the user asks for events or schedule details, do not only return a raw list. "
+        "Group the day with a summary like: 'You have [X] business appointments and [Y] chores today.' "
+        "If there is an open gap between events, mention it clearly with times, for example: "
+        "'You have a free window between 2 PM and 4 PM if you want to get ahead on anything.'"
+    )
+
+
 def truncate_memory(memory: str, max_tokens: int = 800) -> str:
     """Rough token estimate: 1 token ≈ 4 chars."""
     max_chars = max_tokens * 4
@@ -119,6 +185,7 @@ def build_system_prompt(
     integrations: dict | None = None,
 ) -> str:
     prompt = CORE_PERSONALITY.format(name=agent_name)
+    prompt += _today_context()
 
     if setup_answers:
         answers_text = "\n".join(f"- {k}: {v}" for k, v in setup_answers.items() if v)
@@ -134,6 +201,17 @@ def build_system_prompt(
 
     if files:
         files_block = "\n\n## Uploaded files\n"
+        files_block += (
+            "\nWhen a user uploads a document, ask what they want to do with it. You can:\n"
+            "- Summarize it.\n"
+            "- Extract Dates: If it's an invoice or contract, find the dates and offer to add them to the calendar.\n"
+            "- Search: Find specific answers inside the document.\n"
+            "If the user asks about a specific uploaded file, call read_document_content before answering.\n"
+            "For invoice or contract workflows, use read_document_content first, then identify key fields like amount, due date, and bill/vendor context before replying.\n"
+            "If you find a payment due date, ask a direct confirmation question to create a reminder event, for example: 'Should I add a Business calendar reminder to pay this?'\n"
+            "Only after the user confirms, call add_calendar_event with category='business' and a clear title such as 'Pay [vendor] invoice'.\n"
+            "Never create calendar events for document dates without explicit user confirmation.\n"
+        )
         for f in files:
             content_preview = f["content"][:3000]
             files_block += f"\n### {f['name']}\n{content_preview}\n"
@@ -173,6 +251,7 @@ def build_group_system_prompt(
 
     core = CORE_PERSONALITY.format(name=agent_name)
     prompt = f"{group_context}\n\n{core}"
+    prompt += _today_context()
 
     if setup_answers:
         answers_text = "\n".join(f"- {k}: {v}" for k, v in setup_answers.items() if v)
@@ -313,7 +392,7 @@ Current memory:
 Recent conversation:
 {conversation}
 
-Update the memory file with anything worth remembering from this conversation. Keep it concise — cut anything stale, add anything new. Use this structure:
+Update only {agent_name}'s own memory file with anything worth remembering from this conversation. Never add facts about other agents unless this conversation explicitly discussed them. Keep it concise — cut anything stale, add anything new. Use this structure:
 
 ## Business Context
 ## Key People

@@ -10,7 +10,12 @@ import { widgetsRouter } from './routes/widgets'
 import { clusterRouter } from './routes/cluster'
 import { browseRouter } from './routes/browse'
 import { credentialsRouter } from './routes/credentials'
+import { appointmentsRouter } from './routes/appointments'
+import { memoriesRouter } from './routes/memories'
 import { automationsRouter, loadAutomations } from './routes/automations'
+import { workflowsRouter } from './routes/workflows'
+import { activepiecesRouter } from './routes/activepieces'
+import { loadWorkflows } from './workflows/runner'
 import { seedTemplates } from './automations/seeder'
 
 dotenv.config({ path: '../.env' })
@@ -32,13 +37,18 @@ app.use('/api/widgets', widgetsRouter)
 app.use('/api/cluster', clusterRouter)
 app.use('/api/browse', browseRouter)
 app.use('/api/credentials', credentialsRouter)
+app.use('/api/appointments', appointmentsRouter)
+app.use('/api/memories', memoriesRouter)
 app.use('/api/automations', automationsRouter)
+app.use('/api/workflows', workflowsRouter)
+app.use('/api/activepieces', activepiecesRouter)
 
 const PORT = process.env.BACKEND_PORT ?? 3001
 app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`)
   await seedTemplates()
   await loadAutomations()
+  await loadWorkflows()
 })
 
 export { app }

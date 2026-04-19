@@ -24,33 +24,22 @@ export default function AgentChatPage() {
   const [streamingContent, setStreamingContent] = useState('')
   const [uploading, setUploading] = useState(false)
   const [showComputerUse, setShowComputerUse] = useState(false)
+  const [automationMode, setAutomationMode] = useState(false)
   const streamingContentRef = useRef('')
+  const autoSendPending = useRef<string | null>(null)
 
-  useEffect(() => {
-    Promise.all([
-      api.agents.list().then((agents) => agents.find((a) => a.id === id) ?? null),
-      api.agents.messages(id),
-      api.agents.files(id),
-    ]).then(([foundAgent, msgs, agentFiles]) => {
-      setAgent(foundAgent)
-      setMessages(msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content })))
-      setFiles(agentFiles)
-    })
-  }, [id])
-
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || streaming) return
-
-    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: input.trim() }
-    setMessages((prev) => [...prev, userMsg])
-    const sentInput = input.trim()
-    setInput('')
+  // Core send function — accepts text directly, does not read from input state
+  const sendText = useCallback(async (text: string, options?: { skipLocalEcho?: boolean }) => {
+    if (!text.trim() || streaming) return
+    if (!options?.skipLocalEcho) {
+      const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: text.trim() }
+      setMessages((prev) => [...prev, userMsg])
+    }
     setStreaming(true)
     setStreamingContent('')
     streamingContentRef.current = ''
-
     try {
-      for await (const event of readSSE(`/api/agents/${id}/chat`, { message: sentInput })) {
+      for await (const event of readSSE(`/api/agents/${id}/chat`, { message: text.trim() })) {
         if (event.delta) {
           streamingContentRef.current += event.delta
           setStreamingContent(streamingContentRef.current)
@@ -59,13 +48,73 @@ export default function AgentChatPage() {
     } finally {
       const content = streamingContentRef.current
       if (content) {
-        setMessages((msgs) => [...msgs, { id: Date.now().toString() + '-a', role: 'assistant', content }])
+        setMessages((msgs) => [
+          ...msgs,
+          { id: Date.now().toString() + '-a', role: 'assistant', content },
+        ])
       }
       setStreamingContent('')
       streamingContentRef.current = ''
       setStreaming(false)
     }
-  }, [input, streaming, id])
+  }, [streaming, id])
+
+  const handleSend = useCallback(async () => {
+    const text = input.trim()
+    if (!text) return
+    setInput('')
+    await sendText(text)
+  }, [input, sendText])
+
+  useEffect(() => {
+    // Grab any initial message stored by the home page before loading
+    const key = `agent-init-${id}`
+    const initMsg = sessionStorage.getItem(key)
+    if (initMsg) {
+      autoSendPending.current = initMsg
+      const trimmedInit = initMsg.trim()
+      if (trimmedInit) {
+        setMessages((prev) => {
+          const exists = prev.some((m) => m.role === 'user' && m.content === trimmedInit)
+          if (exists) return prev
+          return [...prev, { id: `init-${Date.now()}`, role: 'user', content: trimmedInit }]
+        })
+      }
+    }
+
+    Promise.all([
+      api.agents.list().then((agents) => agents.find((a) => a.id === id) ?? null),
+      api.agents.messages(id),
+      api.agents.files(id),
+    ]).then(([foundAgent, msgs, agentFiles]) => {
+      setAgent(foundAgent)
+      const fetchedMessages = msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content }))
+      setMessages((prev) => {
+        if (prev.length === 0) return fetchedMessages
+
+        const merged = [...fetchedMessages]
+        for (const existing of prev) {
+          const alreadyPresent = merged.some(
+            (m) => m.id === existing.id || (m.role === existing.role && m.content === existing.content)
+          )
+          if (!alreadyPresent) merged.push(existing)
+        }
+        return merged
+      })
+      setFiles(agentFiles)
+    })
+  }, [id])
+
+  // Fire auto-send once agent data is loaded
+  useEffect(() => {
+    if (agent && autoSendPending.current) {
+      const text = autoSendPending.current
+      autoSendPending.current = null
+      sessionStorage.removeItem(`agent-init-${id}`)
+      sendText(text, { skipLocalEcho: true })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, id])
 
   async function handleFileUpload(file: File) {
     setUploading(true)
@@ -79,17 +128,33 @@ export default function AgentChatPage() {
     }
   }
 
+  function handleAutomationModeChange(active: boolean) {
+    setAutomationMode(active)
+    if (active) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString() + '-mode',
+          role: 'assistant',
+          content: "**Automation Builder activated.**\n\nI can build Cluster-native workflows or connect third-party services (Gmail, Slack, Notion).\n\nWhat do you want to automate?",
+        },
+      ])
+    }
+  }
+
   async function handleDeleteFile(fileId: string) {
     await api.agents.deleteFile(id, fileId)
     setFiles((prev) => prev.filter((f) => f.id !== fileId))
   }
 
-  const role = (agent?.setupAnswers as Record<string, string> | null)?.['Business type / role'] ?? ''
+  const role =
+    (agent?.setupAnswers as Record<string, string> | null)?.['Personality selection']
+    ?? (agent?.setupAnswers as Record<string, string> | null)?.['Business type / role']
+    ?? ''
   const isActive = agent?.status !== 'setting_up' && agent?.status !== 'offline'
 
   if (!agent) return (
     <div className="h-full flex flex-col">
-      {/* Skeleton header */}
       <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
         <div className="w-6 h-4 bg-white/5 rounded animate-pulse" />
         <div className="flex items-center gap-2.5">
@@ -139,7 +204,6 @@ export default function AgentChatPage() {
 
       {/* Body */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Chat */}
         <div className="flex-1 min-h-0">
           <ChatWindow
             messages={messages}
@@ -148,14 +212,15 @@ export default function AgentChatPage() {
             inputValue={input}
             onInputChange={setInput}
             onSubmit={handleSend}
-            placeholder={`Message ${agent.name}...`}
+            placeholder={automationMode ? 'Describe what you want to automate...' : `Message ${agent.name}...`}
             agentName={agent.name}
             onFileUpload={handleFileUpload}
             uploading={uploading}
+            automationMode={automationMode}
+            onAutomationModeChange={handleAutomationModeChange}
           />
         </div>
 
-        {/* Computer Use Panel */}
         {showComputerUse && (
           <ComputerUsePanel
             agentName={agent.name}
@@ -170,7 +235,6 @@ export default function AgentChatPage() {
           />
         )}
 
-        {/* Files sidebar — only shown when files exist */}
         {files.length > 0 && (
           <div className="w-48 shrink-0 border-l border-surface-border flex flex-col">
             <div className="p-3 border-b border-surface-border">

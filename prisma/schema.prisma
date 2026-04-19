@@ -21,6 +21,7 @@ model User {
   webCredentials  WebCredential[]
   automations      Automation[]
   browseActivities BrowseActivity[]
+  workflows        Workflow[]
 }
 
 model OAuthConfig {
@@ -202,4 +203,30 @@ model GroupChatMessage {
   role        String
   content     String
   createdAt   DateTime  @default(now())
+}
+
+model Workflow {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  nodes       Json          @default("[]")
+  edges       Json          @default("[]")
+  status      String        @default("draft")  // "draft" | "active" | "paused"
+  lastRunAt   DateTime?
+  lastRunStatus String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  runs        WorkflowRun[]
+}
+
+model WorkflowRun {
+  id          String    @id @default(cuid())
+  workflowId  String
+  workflow    Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  status      String    // "running" | "success" | "failed"
+  result      String?
 }

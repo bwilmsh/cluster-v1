@@ -1,3 +1,11 @@
+## Google Maps Embed (Optional)
+
+To render location cards with direct Google Maps embedding, set:
+
+`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key`
+
+in your environment file used by Next.js.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

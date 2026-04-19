@@ -2,11 +2,12 @@
   "name": "cluster",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"cd frontend && npm install && npm run dev\"",
+    "dev": "docker-compose up -d && concurrently -n backend,agent,frontend -c cyan,magenta,green \"npm run dev --prefix backend\" \"python3 agent/main.py\" \"cd frontend && npm install && npm run dev\"",
+    "services:stop": "docker-compose down",
     "build": "cd frontend && npm run build",
     "start": "concurrently -n backend,agent,frontend -c cyan,magenta,green \"node backend/dist/index.js\" \"python3 agent/main.py\" \"npm run start --prefix frontend\"",
     "postinstall": "cd backend && npx prisma generate --schema ../prisma/schema.prisma",
-    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix electron && cd agent && pip install -r requirements.txt",
+    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend && npm install --prefix electron && python3 -m pip install -r agent/requirements.txt",
     "electron:dev": "npm run dev & sleep 8 && npm run dev --prefix electron",
     "electron:build": "npm run build --prefix electron",
     "electron:dist": "npm run build --prefix frontend && npm run dist --prefix electron",
@@ -24,6 +25,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.103.3",
     "concurrently": "^8.2.2"
   }
 }

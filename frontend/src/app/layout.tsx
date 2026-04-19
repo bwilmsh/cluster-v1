@@ -12,7 +12,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body className="bg-surface text-white h-screen overflow-hidden antialiased">
+      <body
+        className="h-screen overflow-hidden antialiased"
+        style={{
+          backgroundColor: 'var(--bg-primary)',
+          color: 'var(--text-primary)',
+          fontFamily: 'var(--font-geist-sans)',
+        }}
+      >
         <div className="flex h-full">
           <Sidebar />
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

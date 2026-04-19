@@ -1,361 +1,346 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { api, Agent, Automation, AutomationRun } from '@/lib/api'
-import { LoadingDots } from '@/components/LoadingDots'
+import { useState, useEffect, useCallback } from 'react'
+import { api, APFlow, APRun, APStatus } from '@/lib/api'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────────────────────
 
-type Repeat = 'manual' | 'daily' | 'weekly' | 'weekdays' | 'hourly'
+function formatDate(iso: string | null) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
 
-const REPEAT_OPTIONS: { value: Repeat; label: string }[] = [
-  { value: 'manual', label: 'Manual only' },
-  { value: 'daily', label: 'Every day' },
-  { value: 'weekly', label: 'Every week' },
-  { value: 'weekdays', label: 'Mon–Fri' },
-  { value: 'hourly', label: 'Every hour' },
-]
-
-function buildCron(repeat: Repeat, hour: number, min: number): string | undefined {
-  switch (repeat) {
-    case 'manual': return undefined
-    case 'daily': return `${min} ${hour} * * *`
-    case 'weekly': return `${min} ${hour} * * 0`
-    case 'weekdays': return `${min} ${hour} * * 1-5`
-    case 'hourly': return `0 * * * *`
+function runStatusColor(status: APRun['status']): string {
+  switch (status) {
+    case 'SUCCEEDED': return '#22c55e'
+    case 'RUNNING':   return '#f59e0b'
+    case 'FAILED':
+    case 'INTERNAL_ERROR': return '#ef4444'
+    default:          return 'var(--text-tertiary)'
   }
 }
 
-function cronToLabel(expr: string | null): string {
-  if (!expr) return 'Manual'
-  if (expr === '0 * * * *') return 'Every hour'
-  const parts = expr.split(' ')
-  if (parts.length < 5) return expr
-  const [min, hour, , , dow] = parts
-  const time = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`
-  if (dow === '1-5') return `Mon–Fri ${time}`
-  if (dow === '0') return `Weekly ${time}`
-  return `Daily ${time}`
-}
-
-function timeAgo(d: string | null | undefined) {
-  if (!d) return 'never'
-  const mins = Math.floor((Date.now() - new Date(d).getTime()) / 60000)
-  if (mins < 2) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  success: 'bg-emerald-400',
-  failed: 'bg-red-400',
-  running: 'bg-yellow-400 animate-pulse',
-  skipped: 'bg-white/20',
-}
-
-const STATUS_TEXT: Record<string, string> = {
-  success: 'text-emerald-400',
-  failed: 'text-red-400',
-  running: 'text-yellow-400',
-  skipped: 'text-white/30',
-}
-
-// ─── New Automation Modal ─────────────────────────────────────────────────────
-
-function NewAutomationModal({
-  agents,
-  onSave,
-  onClose,
-}: {
-  agents: Agent[]
-  onSave: () => void
-  onClose: () => void
-}) {
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? '')
-  const [goal, setGoal] = useState('')
-  const [repeat, setRepeat] = useState<Repeat>('daily')
-  const [hour, setHour] = useState(8)
-  const [min, setMin] = useState(0)
-  const [deliveryType, setDeliveryType] = useState('chat')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSave() {
-    if (!goal.trim() || !agentId) return
-    setSaving(true)
-    setError(null)
-    try {
-      const schedule = buildCron(repeat, hour, min)
-      await api.automations.create({
-        agentId,
-        goal: goal.trim(),
-        schedule,
-        deliveryType,
-      })
-      onSave()
-    } catch {
-      setError('Failed to create automation. Try again.')
-      setSaving(false)
-    }
+function runStatusLabel(status: APRun['status']): string {
+  switch (status) {
+    case 'SUCCEEDED':     return 'Success'
+    case 'RUNNING':       return 'Running'
+    case 'FAILED':        return 'Failed'
+    case 'TIMEOUT':       return 'Timed out'
+    case 'INTERNAL_ERROR':return 'Error'
+    case 'STOPPED':       return 'Stopped'
+    case 'SKIPPED':       return 'Skipped'
+    default:              return status
   }
+}
 
+// ─── Setup screen ─────────────────────────────────────────────────────────────
+
+function SetupScreen({ reason }: { reason?: string }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-2xl border border-surface-border bg-surface-raised overflow-hidden">
-        <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
-          <h2 className="font-semibold text-white text-sm">New Automation</h2>
-          <button onClick={onClose} className="text-white/30 hover:text-white/60 transition-colors">✕</button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          {/* Agent */}
-          <div>
-            <label className="block text-xs text-white/40 mb-1.5">Agent</label>
-            <select
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-              className="w-full rounded-xl border border-surface-border bg-surface px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Goal */}
-          <div>
-            <label className="block text-xs text-white/40 mb-1.5">What should this automation do?</label>
-            <textarea
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="e.g. Every morning, pull my top 5 unread emails and summarize them. Search for the latest news about my industry. Post a daily update to Slack."
-              rows={4}
-              className="w-full rounded-xl border border-surface-border bg-surface px-3 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/30 resize-none"
-            />
-          </div>
-
-          {/* Schedule */}
-          <div>
-            <label className="block text-xs text-white/40 mb-1.5">Schedule</label>
-            <div className="flex gap-2">
-              <select
-                value={repeat}
-                onChange={(e) => setRepeat(e.target.value as Repeat)}
-                className="flex-1 rounded-xl border border-surface-border bg-surface px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
-              >
-                {REPEAT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              {repeat !== 'manual' && repeat !== 'hourly' && (
-                <input
-                  type="time"
-                  value={`${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`}
-                  onChange={(e) => {
-                    const [h, m] = e.target.value.split(':').map(Number)
-                    setHour(h); setMin(m)
-                  }}
-                  className="rounded-xl border border-surface-border bg-surface px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
-                />
-              )}
-            </div>
-          </div>
-
-          {/* Delivery */}
-          <div>
-            <label className="block text-xs text-white/40 mb-1.5">Deliver result to</label>
-            <select
-              value={deliveryType}
-              onChange={(e) => setDeliveryType(e.target.value)}
-              className="w-full rounded-xl border border-surface-border bg-surface px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
-            >
-              <option value="chat">Chat (in-app)</option>
-              <option value="email">Email</option>
-              <option value="slack">Slack</option>
-            </select>
-          </div>
-
-          {error && <p className="text-xs text-red-400">{error}</p>}
-        </div>
-
-        <div className="flex justify-end gap-2 border-t border-surface-border px-5 py-4">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm text-white/50 hover:text-white/80 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !goal.trim() || !agentId}
-            className="px-4 py-2 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
-          >
-            {saving ? 'Creating…' : 'Create'}
-          </button>
-        </div>
+    <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6 text-center max-w-lg mx-auto">
+      <div
+        className="w-12 h-12 rounded-2xl flex items-center justify-center"
+        style={{ backgroundColor: 'var(--bg-tertiary)' }}
+      >
+        <svg viewBox="0 0 24 24" fill="none" className="w-6 h-6" style={{ color: 'var(--text-secondary)' }}>
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+            stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </div>
+
+      <div>
+        <h2 className="text-base font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+          Connect Activepieces
+        </h2>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          {reason === 'no_credentials'
+            ? 'Add your Activepieces login details to .env to enable automations.'
+            : 'Activepieces isn\'t reachable. Make sure Docker is running.'}
+        </p>
+      </div>
+
+      <ol className="text-left space-y-3 w-full">
+        {[
+          {
+            step: '1',
+            text: (
+              <>
+                Run{' '}
+                <code
+                  className="px-1.5 py-0.5 rounded text-xs"
+                  style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                >
+                  npm run dev
+                </code>{' '}
+                from the{' '}
+                <code
+                  className="px-1.5 py-0.5 rounded text-xs"
+                  style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                >
+                  cluster
+                </code>{' '}
+                folder to start Docker services
+              </>
+            ),
+          },
+          {
+            step: '2',
+            text: (
+              <>
+                Open{' '}
+                <a
+                  href="http://localhost:8080"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  localhost:8080
+                </a>{' '}
+                and create your Activepieces account if you haven't already
+              </>
+            ),
+          },
+          {
+            step: '3',
+            text: (
+              <>
+                Add these two lines to your{' '}
+                <code
+                  className="px-1.5 py-0.5 rounded text-xs"
+                  style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                >
+                  .env
+                </code>{' '}
+                file:
+                <div
+                  className="mt-2 px-3 py-2 rounded-lg text-xs font-mono"
+                  style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                >
+                  ACTIVEPIECES_EMAIL=your@email.com<br />
+                  ACTIVEPIECES_PASSWORD=yourpassword
+                </div>
+              </>
+            ),
+          },
+          {
+            step: '4',
+            text: 'Restart the backend — the Automations page will connect automatically',
+          },
+        ].map(({ step, text }) => (
+          <li key={step} className="flex gap-3 items-start">
+            <span
+              className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold mt-0.5"
+              style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+            >
+              {step}
+            </span>
+            <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              {text}
+            </span>
+          </li>
+        ))}
+      </ol>
+
+      <a
+        href="http://localhost:8080"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="px-4 py-2 rounded-xl text-sm font-medium transition-opacity"
+        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+        onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+      >
+        Open Activepieces ↗
+      </a>
     </div>
   )
 }
 
-// ─── Run History Panel ────────────────────────────────────────────────────────
+// ─── Run history panel ────────────────────────────────────────────────────────
 
-function RunHistoryPanel({
-  automation,
-  onClose,
-}: {
-  automation: Automation
-  onClose: () => void
-}) {
-  const [runs, setRuns] = useState<AutomationRun[] | null>(null)
+function RunHistoryPanel({ flowId, onClose }: { flowId: string; onClose: () => void }) {
+  const [runs, setRuns] = useState<APRun[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.automations.runs(automation.id).then(setRuns).catch(() => setRuns([]))
-  }, [automation.id])
+    api.ap.runs(flowId).then((r) => {
+      setRuns(r)
+      setLoading(false)
+    })
+  }, [flowId])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-surface-border bg-surface-raised overflow-hidden">
-        <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
-          <div>
-            <h2 className="font-semibold text-white text-sm">Run History</h2>
-            <p className="text-xs text-white/35 mt-0.5">{automation.name}</p>
-          </div>
-          <button onClick={onClose} className="text-white/30 hover:text-white/60 transition-colors">✕</button>
-        </div>
+    <div
+      className="absolute inset-0 z-10 flex flex-col"
+      style={{ backgroundColor: 'var(--bg-primary)' }}
+    >
+      <div
+        className="shrink-0 h-14 flex items-center justify-between px-6"
+        style={{ borderBottom: '0.5px solid var(--border)' }}
+      >
+        <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Run History
+        </h2>
+        <button
+          onClick={onClose}
+          className="text-xs transition-opacity"
+          style={{ color: 'var(--text-secondary)' }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.6')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          ← Back
+        </button>
+      </div>
 
-        <div className="max-h-[60vh] overflow-y-auto">
-          {runs === null ? (
-            <div className="flex items-center justify-center py-12">
-              <LoadingDots />
-            </div>
-          ) : runs.length === 0 ? (
-            <p className="text-center text-white/30 text-sm py-12">No runs yet.</p>
-          ) : (
-            <div className="divide-y divide-surface-border">
-              {runs.map((run) => (
-                <div key={run.id} className="px-5 py-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_COLORS[run.status] ?? 'bg-white/20'}`} />
-                      <span className={`text-xs font-medium uppercase tracking-wide ${STATUS_TEXT[run.status] ?? 'text-white/40'}`}>
-                        {run.status}
-                      </span>
-                    </div>
-                    <span className="text-xs text-white/30 shrink-0">{timeAgo(run.startedAt)}</span>
+      <div className="flex-1 overflow-y-auto p-6">
+        {loading ? (
+          <p className="text-sm text-center mt-8" style={{ color: 'var(--text-tertiary)' }}>
+            Loading…
+          </p>
+        ) : runs.length === 0 ? (
+          <p className="text-sm text-center mt-8" style={{ color: 'var(--text-tertiary)' }}>
+            No runs yet
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {runs.map((run) => (
+              <div
+                key={run.id}
+                className="flex items-center justify-between px-4 py-3 rounded-xl"
+                style={{ backgroundColor: 'var(--bg-secondary)', border: '0.5px solid var(--border)' }}
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: runStatusColor(run.status) }}
+                  />
+                  <div>
+                    <p className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {runStatusLabel(run.status)}
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      {formatDate(run.startTime)}
+                    </p>
                   </div>
-                  {run.finalResult && (
-                    <p className="text-sm text-white/60 leading-relaxed whitespace-pre-wrap ml-3.5">{run.finalResult}</p>
-                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                {run.finishTime && (
+                  <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                    finished {formatDate(run.finishTime)}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-// ─── Automation Card ──────────────────────────────────────────────────────────
+// ─── Flow card ────────────────────────────────────────────────────────────────
 
-function AutomationCard({
-  automation,
-  onRun,
+function FlowCard({
+  flow,
   onToggle,
+  onRun,
   onDelete,
   onHistory,
-  running,
 }: {
-  automation: Automation
-  onRun: () => void
-  onToggle: () => void
-  onDelete: () => void
-  onHistory: () => void
-  running: boolean
+  flow: APFlow
+  onToggle: (id: string) => void
+  onRun: (id: string) => void
+  onDelete: (id: string) => void
+  onHistory: (id: string) => void
 }) {
-  const status = automation.lastRunStatus ?? null
+  const enabled = flow.status === 'ENABLED'
+  const published = !!flow.publishedVersionId
 
   return (
-    <div className="rounded-2xl border border-surface-border bg-surface-raised p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {status && (
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_COLORS[status] ?? 'bg-white/20'}`} />
-            )}
-            <p className="font-medium text-white text-sm leading-tight truncate">{automation.name}</p>
-          </div>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {automation.agent && (
-              <span className="text-xs text-white/35">{automation.agent.name}</span>
-            )}
-            <span className="text-white/15 text-xs">·</span>
-            <span className="text-xs text-white/35">{cronToLabel(automation.schedule ?? null)}</span>
-            {automation.lastRunAt && (
-              <>
-                <span className="text-white/15 text-xs">·</span>
-                <span className={`text-xs ${STATUS_TEXT[status ?? ''] ?? 'text-white/35'}`}>
-                  {timeAgo(automation.lastRunAt)}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
+    <div
+      className="flex items-center gap-4 px-5 py-4 rounded-2xl"
+      style={{ backgroundColor: 'var(--bg-secondary)', border: '0.5px solid var(--border)' }}
+    >
+      {/* Status dot */}
+      <span
+        className="shrink-0 w-2 h-2 rounded-full"
+        style={{ backgroundColor: enabled ? '#22c55e' : 'var(--text-tertiary)' }}
+      />
 
-        {/* Active toggle */}
-        <button
-          onClick={onToggle}
-          className={`shrink-0 w-9 h-5 rounded-full transition-colors relative ${automation.active ? 'bg-accent' : 'bg-white/10'}`}
-          title={automation.active ? 'Pause' : 'Activate'}
-        >
-          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${automation.active ? 'translate-x-4' : 'translate-x-0.5'}`} />
-        </button>
+      {/* Name + meta */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+          {flow.displayName || 'Untitled flow'}
+        </p>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          {published ? `Updated ${formatDate(flow.updated)}` : 'Draft — not published'}
+        </p>
       </div>
 
-      {/* Last result preview */}
-      {automation.lastRunResult && (
-        <div className="mt-3 rounded-xl bg-white/[0.03] border border-surface-border px-3 py-2">
-          <p className="text-xs text-white/40 leading-relaxed line-clamp-3 whitespace-pre-wrap">
-            {automation.lastRunResult}
-          </p>
-        </div>
-      )}
-
       {/* Actions */}
-      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-surface-border">
+      <div className="flex items-center gap-2 shrink-0">
+        {/* History */}
         <button
-          onClick={onRun}
-          disabled={running}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-white/70 hover:text-white transition-colors"
-        >
-          {running ? (
-            <>
-              <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
-              Running…
-            </>
-          ) : (
-            <>
-              <span className="text-[10px]">▶</span>
-              Run now
-            </>
-          )}
-        </button>
-
-        <button
-          onClick={onHistory}
-          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-white/70 hover:text-white transition-colors"
+          onClick={() => onHistory(flow.id)}
+          title="Run history"
+          className="px-3 py-1.5 rounded-lg text-xs transition-opacity"
+          style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
         >
           History
         </button>
 
+        {/* Run now */}
         <button
-          onClick={onDelete}
-          className="ml-auto px-3 py-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 text-xs text-white/35 hover:text-red-400 transition-colors"
+          onClick={() => onRun(flow.id)}
+          disabled={!published}
+          title={published ? 'Run now' : 'Publish the flow in Activepieces first'}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+          onMouseEnter={(e) => { if (published) e.currentTarget.style.opacity = '0.85' }}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
         >
-          Delete
+          Run
+        </button>
+
+        {/* Toggle */}
+        <button
+          onClick={() => onToggle(flow.id)}
+          title={enabled ? 'Disable' : 'Enable'}
+          className="relative shrink-0 rounded-full transition-colors"
+          style={{
+            width: '36px',
+            height: '20px',
+            backgroundColor: enabled ? 'var(--accent)' : 'var(--bg-tertiary)',
+          }}
+        >
+          <span
+            className="absolute top-0.5 rounded-full transition-transform"
+            style={{
+              width: '16px',
+              height: '16px',
+              backgroundColor: '#fff',
+              left: enabled ? '18px' : '2px',
+              transition: 'left 0.15s',
+            }}
+          />
+        </button>
+
+        {/* Delete */}
+        <button
+          onClick={() => onDelete(flow.id)}
+          title="Delete"
+          className="px-2 py-1.5 rounded-lg text-xs transition-opacity"
+          style={{ color: '#ef4444', backgroundColor: 'var(--bg-tertiary)' }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          ✕
         </button>
       </div>
     </div>
@@ -365,126 +350,164 @@ function AutomationCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AutomationsPage() {
-  const [automations, setAutomations] = useState<Automation[] | null>(null)
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [showNew, setShowNew] = useState(false)
-  const [historyFor, setHistoryFor] = useState<Automation | null>(null)
-  const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
+  const [status, setStatus] = useState<APStatus | null>(null)
+  const [flows, setFlows] = useState<APFlow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [historyFlowId, setHistoryFlowId] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
+
+  const showToast = (msg: string, ok = true) => {
+    setToast({ msg, ok })
+    setTimeout(() => setToast(null), 3500)
+  }
 
   const load = useCallback(async () => {
-    const [autosResp, ags] = await Promise.all([
-      api.automations.list(),
-      api.agents.list(),
-    ])
-    setAutomations(autosResp.automations)
-    setAgents(ags)
+    setLoading(true)
+    try {
+      const s = await api.ap.status()
+      setStatus(s)
+      if (s.configured) {
+        const f = await api.ap.flows()
+        setFlows(f)
+      }
+    } catch {
+      setStatus({ configured: false, reason: 'unreachable' })
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  useEffect(() => {
-    load()
-  }, [load])
+  useEffect(() => { load() }, [load])
 
-  async function handleRun(id: string) {
-    setRunningIds((prev) => new Set(prev).add(id))
+  const handleToggle = async (id: string) => {
     try {
-      await api.automations.run(id)
-      // Poll for result after a short delay
-      setTimeout(() => load(), 3000)
-    } catch {}
-    setTimeout(() => {
-      setRunningIds((prev) => { const s = new Set(prev); s.delete(id); return s })
-      load()
-    }, 5000)
+      const updated = await api.ap.toggle(id)
+      setFlows((prev) => prev.map((f) => (f.id === id ? { ...f, status: updated.status } : f)))
+    } catch {
+      showToast('Failed to toggle flow', false)
+    }
   }
 
-  async function handleToggle(id: string) {
-    await api.automations.toggle(id)
-    load()
+  const handleRun = async (id: string) => {
+    const result = await api.ap.run(id)
+    if ('error' in result) {
+      showToast(result.error, false)
+    } else {
+      showToast('Flow triggered successfully')
+    }
   }
 
-  async function handleDelete(id: string) {
-    const auto = automations?.find((a) => a.id === id)
-    if (!confirm(`Delete "${auto?.name}"? This cannot be undone.`)) return
-    await api.automations.delete(id)
-    load()
+  const handleDelete = async (id: string) => {
+    const flow = flows.find((f) => f.id === id)
+    if (!confirm(`Delete "${flow?.displayName || 'this flow'}"?`)) return
+    await api.ap.delete(id)
+    setFlows((prev) => prev.filter((f) => f.id !== id))
+    showToast('Flow deleted')
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       {/* Header */}
-      <div className="shrink-0 border-b border-surface-border px-6 h-14 flex items-center justify-between">
+      <div
+        className="shrink-0 h-14 flex items-center justify-between px-6"
+        style={{ borderBottom: '0.5px solid var(--border)' }}
+      >
+        <h1 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Automations
+        </h1>
         <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold text-white">Automations</h1>
-          {automations && automations.length > 0 && (
-            <span className="text-xs text-white/30">{automations.length}</span>
-          )}
+          <button
+            onClick={load}
+            className="text-xs transition-opacity"
+            style={{ color: 'var(--text-tertiary)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.6')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            Refresh
+          </button>
+          <a
+            href="http://localhost:8080"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-opacity"
+            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            + New Flow ↗
+          </a>
         </div>
-        <button
-          onClick={() => setShowNew(true)}
-          className="px-3 py-1.5 rounded-xl bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors"
-        >
-          + New
-        </button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {automations === null ? (
-          <div className="flex items-center justify-center h-full">
-            <LoadingDots />
-          </div>
-        ) : automations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-            <p className="text-white/30 text-sm">No automations yet.</p>
-            <p className="text-xs text-white/20 max-w-xs">
-              Automations run tasks on a schedule — morning reports, email summaries, web research, and more.
-            </p>
-            <button
-              onClick={() => setShowNew(true)}
-              className="mt-2 px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.10] text-white/60 hover:text-white text-xs transition-colors"
-            >
-              Create your first automation
-            </button>
-          </div>
-        ) : (
-          <div className="max-w-2xl space-y-3">
-            {automations.map((auto) => (
-              <AutomationCard
-                key={auto.id}
-                automation={auto}
-                running={runningIds.has(auto.id)}
-                onRun={() => handleRun(auto.id)}
-                onToggle={() => handleToggle(auto.id)}
-                onDelete={() => handleDelete(auto.id)}
-                onHistory={() => setHistoryFor(auto)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Modals */}
-      {showNew && agents.length > 0 && (
-        <NewAutomationModal
-          agents={agents}
-          onSave={() => { setShowNew(false); load() }}
-          onClose={() => setShowNew(false)}
-        />
-      )}
-      {showNew && agents.length === 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-surface-border bg-surface-raised p-6 text-center">
-            <p className="text-white text-sm mb-2">No agents yet</p>
-            <p className="text-white/40 text-xs mb-4">Hire an agent before creating an automation.</p>
-            <button onClick={() => setShowNew(false)} className="text-xs text-white/50 hover:text-white/80">Close</button>
-          </div>
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Loading…</p>
+        </div>
+      ) : !status?.configured ? (
+        <SetupScreen reason={status?.reason} />
+      ) : (
+        <div className="flex-1 overflow-y-auto p-6">
+          {flows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-4 text-center mt-16">
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                No flows yet. Create your first automation in Activepieces.
+              </p>
+              <a
+                href="http://localhost:8080"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-xl text-sm font-medium transition-opacity"
+                style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                Open Activepieces ↗
+              </a>
+              <p className="text-xs max-w-xs" style={{ color: 'var(--text-tertiary)' }}>
+                Build your flow there, then come back here to manage and run it.
+              </p>
+            </div>
+          ) : (
+            <div className="max-w-2xl mx-auto space-y-3">
+              <p className="text-xs mb-4" style={{ color: 'var(--text-tertiary)' }}>
+                {flows.length} flow{flows.length !== 1 ? 's' : ''} · managed via Activepieces
+              </p>
+              {flows.map((flow) => (
+                <FlowCard
+                  key={flow.id}
+                  flow={flow}
+                  onToggle={handleToggle}
+                  onRun={handleRun}
+                  onDelete={handleDelete}
+                  onHistory={setHistoryFlowId}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
-      {historyFor && (
+
+      {/* Run history overlay */}
+      {historyFlowId && (
         <RunHistoryPanel
-          automation={historyFor}
-          onClose={() => setHistoryFor(null)}
+          flowId={historyFlowId}
+          onClose={() => setHistoryFlowId(null)}
         />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl text-sm font-medium shadow-lg pointer-events-none"
+          style={{
+            backgroundColor: toast.ok ? '#22c55e' : '#ef4444',
+            color: '#fff',
+            zIndex: 50,
+          }}
+        >
+          {toast.msg}
+        </div>
       )}
     </div>
   )

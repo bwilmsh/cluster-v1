@@ -9,16 +9,15 @@ import { SetupModal } from '@/components/SetupModal'
 export default function NewAgentPage() {
   const router = useRouter()
   const [name, setName] = useState('')
-  const [businessType, setBusinessType] = useState('')
   const [creating, setCreating] = useState(false)
-  const [setupAgent, setSetupAgent] = useState<{ id: string; name: string; businessType: string } | null>(null)
+  const [setupAgent, setSetupAgent] = useState<{ id: string; name: string } | null>(null)
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
     setCreating(true)
     const agent = await api.agents.create(name.trim())
-    setSetupAgent({ id: agent.id, name: agent.name, businessType: businessType.trim() })
+    setSetupAgent({ id: agent.id, name: agent.name })
     setCreating(false)
   }
 
@@ -36,7 +35,7 @@ export default function NewAgentPage() {
 
       <div className="max-w-md">
         <h1 className="text-2xl font-semibold text-white mb-2">Hire an Agent</h1>
-        <p className="text-white/40 text-sm mb-8">Name your agent and tell us about your business.</p>
+        <p className="text-white/40 text-sm mb-8">Name your agent, then pick a personality.</p>
 
         <form onSubmit={handleCreate} className="space-y-5">
           {/* Agent Name */}
@@ -55,20 +54,6 @@ export default function NewAgentPage() {
             />
           </div>
 
-          {/* Business Type */}
-          <div>
-            <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-2">
-              Business Type / Role
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Marketing Manager for a coffee shop"
-              value={businessType}
-              onChange={(e) => setBusinessType(e.target.value)}
-              className="w-full bg-surface-raised border border-surface-border rounded-xl px-4 py-3 text-white placeholder-white/20 focus:outline-none focus:border-white/30 text-sm"
-            />
-          </div>
-
           <button
             type="submit"
             disabled={!name.trim() || creating}
@@ -83,7 +68,6 @@ export default function NewAgentPage() {
         <SetupModal
           agentId={setupAgent.id}
           agentName={setupAgent.name}
-          businessContext={setupAgent.businessType}
           onComplete={handleSetupComplete}
         />
       )}
