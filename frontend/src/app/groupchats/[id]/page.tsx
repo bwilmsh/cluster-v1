@@ -27,6 +27,7 @@ export default function GroupChatPage() {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const agentBuffersRef = useRef<Record<string, string>>({})
+  const activeStreamingAgentRef = useRef<string | null>(null)
 
   async function loadChat() {
     const [chatData, msgs] = await Promise.all([
@@ -72,6 +73,7 @@ export default function GroupChatPage() {
     setInput('')
     setStreaming(true)
     agentBuffersRef.current = {}
+    activeStreamingAgentRef.current = null
 
     try {
       for await (const event of readSSE(`/api/groupchats/${id}/message`, {
@@ -79,13 +81,15 @@ export default function GroupChatPage() {
       })) {
         if (event.type === 'agent_start' && event.agentName) {
           agentBuffersRef.current[event.agentName] = ''
-          setStreamingAgents((prev) => [...prev, { name: event.agentName!, content: '' }])
+          activeStreamingAgentRef.current = event.agentName
+          setStreamingAgents([{ name: event.agentName, content: '' }])
         } else if (event.delta && event.agentName) {
+          if (activeStreamingAgentRef.current !== event.agentName) continue
           agentBuffersRef.current[event.agentName] =
             (agentBuffersRef.current[event.agentName] ?? '') + event.delta
-          const snapshot = { ...agentBuffersRef.current }
-          setStreamingAgents(Object.entries(snapshot).map(([name, content]) => ({ name, content })))
+          setStreamingAgents([{ name: event.agentName, content: agentBuffersRef.current[event.agentName] }])
         } else if (event.type === 'agent_done' && event.agentName) {
+          if (activeStreamingAgentRef.current !== event.agentName) continue
           const finalContent = agentBuffersRef.current[event.agentName] ?? ''
           if (finalContent) {
             setMessages((prev) => [
@@ -99,7 +103,8 @@ export default function GroupChatPage() {
             ])
           }
           delete agentBuffersRef.current[event.agentName]
-          setStreamingAgents((prev) => prev.filter((a) => a.name !== event.agentName))
+          setStreamingAgents([])
+          activeStreamingAgentRef.current = null
         } else if (event.type === 'agent_handoff' && event.from && event.to) {
           setMessages((prev) => [
             ...prev,
@@ -114,6 +119,7 @@ export default function GroupChatPage() {
       }
     } finally {
       agentBuffersRef.current = {}
+      activeStreamingAgentRef.current = null
       setStreamingAgents([])
       setStreaming(false)
     }

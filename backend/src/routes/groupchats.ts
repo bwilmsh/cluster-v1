@@ -8,6 +8,60 @@ function getPythonUrl() {
   return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 }
 
+type GroupIntent = 'greeting' | 'task' | 'discussion'
+
+function normalizeForIntent(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9@\s]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function isGreetingMessage(text: string): boolean {
+  const msg = normalizeForIntent(text)
+  if (!msg) return false
+
+  const greetingKeywords = ['hello', 'hi', 'hey', 'yo', 'sup', 'welcome', 'good morning', 'good afternoon', 'good evening']
+  const inclusiveKeywords = ['everyone', 'everybody', 'team', 'all', 'guys', 'folks']
+
+  const hasGreeting = greetingKeywords.some((k) => msg.includes(k))
+  const hasInclusive = inclusiveKeywords.some((k) => msg.includes(k))
+
+  // Short social check-ins should let everyone chime in.
+  if (hasGreeting && (hasInclusive || msg.split(' ').length <= 6)) return true
+  if (msg.includes('welcome') && hasInclusive) return true
+  return false
+}
+
+function isTaskMessage(text: string): boolean {
+  const msg = normalizeForIntent(text)
+  if (!msg) return false
+
+  const taskKeywords = [
+    'can you', 'could you', 'please', 'need', 'task', 'do this', 'handle', 'work on', 'assign', 'owner',
+    'fix', 'build', 'create', 'write', 'plan', 'research', 'summarize', 'follow up', 'reply', 'schedule',
+  ]
+
+  return taskKeywords.some((k) => msg.includes(k))
+}
+
+function detectGroupIntent(text: string): GroupIntent {
+  if (isGreetingMessage(text)) return 'greeting'
+  if (isTaskMessage(text)) return 'task'
+  return 'discussion'
+}
+
+function detectMentionedAgent(text: string, agentNames: string[]): string | null {
+  const matches = text.match(/@([A-Za-z0-9_-]+)/g)
+  if (!matches) return null
+  for (const mention of matches) {
+    const mentioned = mention.slice(1).toLowerCase()
+    const found = agentNames.find((n) =>
+      n.toLowerCase() === mentioned ||
+      n.toLowerCase().split(' ')[0] === mentioned
+    )
+    if (found) return found
+  }
+  return null
+}
+
 // GET /api/groupchats
 groupChatsRouter.get('/', async (_req, res: Response) => {
   try {
@@ -123,18 +177,7 @@ groupChatsRouter.get('/:id/messages', async (req: Request, res: Response) => {
 })
 
 function detectHandoff(response: string, agentNames: string[]): string | null {
-  const matches = response.match(/@(\w+)/g)
-  if (!matches) return null
-  for (const mention of matches) {
-    const mentioned = mention.slice(1).toLowerCase()
-    // Match full name OR first word of the name (e.g. "@Sarah" matches "Sarah Johnson")
-    const found = agentNames.find((n) =>
-      n.toLowerCase() === mentioned ||
-      n.toLowerCase().split(' ')[0] === mentioned
-    )
-    if (found) return found
-  }
-  return null
+  return detectMentionedAgent(response, agentNames)
 }
 
 // POST /api/groupchats/:id/message  — SSE streaming, waterfall agent responses
@@ -197,6 +240,7 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   const membersList = [...agentInfoList, { name: senderName, type: 'human' as const }]
 
   const allAgentNames = agentInfoList.map((a) => a.name)
+  const groupIntent = detectGroupIntent(message)
 
   // Helper: call the Python relevance endpoint
   async function pickAgent(
@@ -226,19 +270,6 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     }
   }
 
-  // Pick the first (most relevant) agent
-  const firstAgentName = await pickAgent(message, senderName, agentInfoList)
-  if (!firstAgentName) {
-    res.setHeader('Content-Type', 'text/event-stream')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no')
-    res.flushHeaders()
-    res.write('data: [DONE]\n\n')
-    res.end()
-    return
-  }
-
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -260,8 +291,14 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   const inTurnHistory = [...historyForAgents]
 
   // Helper: stream one agent's response and return the full text
-  async function streamAgent(agentMember: any, msgText: string, fromName: string): Promise<string> {
+  async function streamAgent(
+    agentMember: any,
+    msgText: string,
+    fromName: string,
+    options?: { useBackgroundMemory?: boolean }
+  ): Promise<string> {
     const agent = agentMember.agent
+    const useBackgroundMemory = options?.useBackgroundMemory === true
     res.write(`data: ${JSON.stringify({ type: 'agent_start', agentName: agent.name, agentId: agent.id })}\n\n`)
 
     let content = ''
@@ -272,7 +309,7 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
         body: JSON.stringify({
           agent_name: agent.name,
           setup_answers: agent.setupAnswers ?? {},
-          memory: agent.memory ?? '',
+          memory: useBackgroundMemory ? (agent.memory ?? '') : '',
           members: membersList,
           sender_name: fromName,
           history: inTurnHistory,
@@ -326,11 +363,38 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
   }
 
   // ── Waterfall ──────────────────────────────────────────────────────────────
+  // greeting: everyone replies once
   // Turn 0: most relevant agent responds to the user's message
   // Turn 1: check if a different agent should also contribute (auto-continuation)
   // Turn 1+: follow explicit @mention handoffs only (max 2 more)
   const MAX_EXPLICIT_HANDOFFS = 2
   let respondedAgents = new Set<string>()
+  // Fresh-by-default in group chats: only qualified task responders use background memory.
+  const allowBackgroundMemory = groupIntent === 'task'
+
+  res.write(`data: ${JSON.stringify({ type: 'routing_decision', mode: groupIntent })}\n\n`)
+
+  if (groupIntent === 'greeting') {
+    for (const member of agentMembers) {
+      if (aborted) break
+      const agentName = member.agent.name as string
+      if (respondedAgents.has(agentName)) continue
+      await streamAgent(member, message, senderName, { useBackgroundMemory: false })
+      respondedAgents.add(agentName)
+    }
+    res.write('data: [DONE]\n\n')
+    res.end()
+    return
+  }
+
+  // Pick the first (most relevant) agent
+  const directlyMentionedAgent = detectMentionedAgent(message, allAgentNames)
+  const firstAgentName = directlyMentionedAgent ?? await pickAgent(message, senderName, agentInfoList)
+  if (!firstAgentName) {
+    res.write('data: [DONE]\n\n')
+    res.end()
+    return
+  }
 
   // Turn 0 — first agent
   const firstMember = agentMembers.find((m: any) => m.agent.name === firstAgentName)
@@ -340,7 +404,9 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
     return
   }
 
-  const firstResponse = await streamAgent(firstMember, message, senderName)
+  const firstResponse = await streamAgent(firstMember, message, senderName, {
+    useBackgroundMemory: allowBackgroundMemory,
+  })
   respondedAgents.add(firstAgentName)
 
   if (!aborted && firstResponse) {
@@ -359,7 +425,9 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
         const handoffMember = agentMembers.find((m: any) => m.agent.name === currentHandoffAgent)
         if (!handoffMember || respondedAgents.has(currentHandoffAgent)) break
 
-        const handoffResponse = await streamAgent(handoffMember, message, currentHandoffFrom)
+        const handoffResponse = await streamAgent(handoffMember, message, currentHandoffFrom, {
+          useBackgroundMemory: allowBackgroundMemory,
+        })
         respondedAgents.add(currentHandoffAgent)
 
         const nextMention = detectHandoff(
@@ -374,19 +442,6 @@ groupChatsRouter.post('/:id/message', async (req: Request, res: Response) => {
           break
         }
         handoffCount++
-      }
-    } else if (agentMembers.length > 1) {
-      // No explicit handoff — auto-check if a different agent should add value
-      const remainingAgents = agentInfoList.filter((a) => !respondedAgents.has(a.name))
-      if (remainingAgents.length > 0) {
-        const autoNext = await pickAgent(message, senderName, remainingAgents, firstResponse)
-        if (autoNext && !respondedAgents.has(autoNext)) {
-          const autoMember = agentMembers.find((m: any) => m.agent.name === autoNext)
-          if (autoMember && !aborted) {
-            await streamAgent(autoMember, message, senderName)
-            respondedAgents.add(autoNext)
-          }
-        }
       }
     }
   }

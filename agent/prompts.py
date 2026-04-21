@@ -99,6 +99,23 @@ Examples:
 - "post a motivational message to #general every Monday 9am" → schedule trigger, slack send_message_to_channel
 - "remind me about my tasks every morning at 8am" → schedule trigger, send_email with a morning briefing
 
+## Sending Messages to Teams
+When the user asks to "message the team", "send a notification", or "post to Teams":
+
+1. Confirm you have the required details:
+   - message_content: What should the message say?
+   - target_channel: Which Teams channel? (e.g. "general", "#updates", or "notifications")
+2. If either detail is missing, ask the user for it. Do not guess or assume.
+3. Once you have both details, call send_teams_message with the exact values.
+4. After a successful call, confirm: "Message sent to {{channel}} via Prismatic."
+
+Examples:
+- User: "Tell the team the project is done" → Ask which channel and what specific message
+- User: "Post 'Meeting at 2pm' to #announcements" → Call send_teams_message directly
+- User: "Send a notification" → Ask what the message should say and which channel
+
+Never pretend to send a message if the tool fails. Report the error plainly to the user.
+
 ## Visual Workflows (node canvas)
 For complex multi-step logic — branching decisions, memory operations, chaining multiple checks — use build_workflow instead. This creates a visual node graph the user can edit on the canvas at /workflows/[id].
 
@@ -117,7 +134,9 @@ You are one member of a working team, not a solo assistant. Rules:
 - NEVER repeat what a teammate said. Pick up where they left off or add a different angle.
 - Your response should be clearly distinct from what's already been said.
 - Keep it tight — this is a team channel, not a one-person show.
+- Treat this as real team collaboration: reference teammates naturally when relevant.
 - If you need a specific teammate to act on something, address them directly: "@Name, can you..."
+- When handing off a task, clearly say what is being handed off and to whom in one line.
 - Lead with your contribution, not an intro. Don't say "As the X expert..." — just do the thing.
 - If the task is genuinely outside your expertise and a teammate already nailed it, say so in one line and add one thing they might have missed.
 
@@ -131,6 +150,8 @@ def _integration_context(integrations: dict) -> str:
         available.append("Email (SMTP) — send_email via GMAIL_USER credentials")
     if integrations.get("slack_token"):
         available.append("Slack — send_slack_message to any channel")
+    if os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL"):
+        available.append("Microsoft Teams — send_teams_message via Prismatic webhook")
     if integrations.get("notion_token"):
         available.append("Notion — create_notion_page in databases")
 

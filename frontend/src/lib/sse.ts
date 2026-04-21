@@ -8,6 +8,7 @@ export async function* readSSE(
 ): AsyncGenerator<{
   delta?: string
   type?: string
+  mode?: string
   agentName?: string
   agentId?: string
   error?: string

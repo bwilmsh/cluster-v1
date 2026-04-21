@@ -68,6 +68,17 @@ function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   )
 }
 
+function TypingDots({ dim = false }: { dim?: boolean }) {
+  const dotClass = dim ? 'bg-white/30' : 'bg-white/40'
+  return (
+    <div className="flex gap-1 items-center py-0.5">
+      <span className={`w-1.5 h-1.5 rounded-full animate-bounce ${dotClass}`} style={{ animationDelay: '0ms' }} />
+      <span className={`w-1.5 h-1.5 rounded-full animate-bounce ${dotClass}`} style={{ animationDelay: '150ms' }} />
+      <span className={`w-1.5 h-1.5 rounded-full animate-bounce ${dotClass}`} style={{ animationDelay: '300ms' }} />
+    </div>
+  )
+}
+
 export function GroupChatWindow({
   members,
   messages,
@@ -95,6 +106,18 @@ export function GroupChatWindow({
             <MessageRow key={msg.id} msg={msg} />
           ))}
 
+          {isStreaming && streamingAgents.length === 0 && (
+            <div className="flex gap-2.5 justify-start">
+              <div className="w-8 h-8 rounded-full border border-white/15 bg-white/5 flex items-center justify-center shrink-0">
+                <span className="text-[10px] text-white/40 font-semibold">AI</span>
+              </div>
+              <div className="max-w-[70%] rounded-xl px-4 py-2.5 text-sm bg-surface-raised border border-surface-border text-white/90">
+                <p className="text-xs text-white/45 mb-1">Thinking...</p>
+                <TypingDots />
+              </div>
+            </div>
+          )}
+
           {streamingAgents.map((sa) => (
             <div key={sa.name} className="flex gap-2.5 justify-start">
               <Avatar name={sa.name} />
@@ -107,11 +130,7 @@ export function GroupChatWindow({
                     {renderAgentContent(sa.content, true)}
                   </div>
                 ) : (
-                  <div className="flex gap-1 items-center py-0.5">
-                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
+                  <TypingDots />
                 )}
               </div>
             </div>
@@ -184,10 +203,13 @@ export function GroupChatWindow({
                     </p>
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isTyping ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-400/60'}`} />
                   </div>
-                  {member.role ? (
+                  {isTyping ? (
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <p className="text-[10px] text-white/35">typing</p>
+                      <TypingDots dim />
+                    </div>
+                  ) : member.role ? (
                     <p className="text-[10px] text-white/25 truncate">{member.role}</p>
-                  ) : isTyping ? (
-                    <p className="text-[10px] text-white/30">thinking...</p>
                   ) : null}
                 </div>
               </div>

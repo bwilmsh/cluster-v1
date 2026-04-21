@@ -564,6 +564,19 @@ SEND_SLACK_MESSAGE_TOOL = {
     },
 }
 
+SEND_TEAMS_MESSAGE_TOOL = {
+    "name": "send_teams_message",
+    "description": "Send a message to a Microsoft Teams channel via Prismatic integration.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "message_content": {"type": "string", "description": "The message text to send"},
+            "target_channel": {"type": "string", "description": "Target Teams channel name or ID"},
+        },
+        "required": ["message_content", "target_channel"],
+    },
+}
+
 CREATE_NOTION_PAGE_TOOL = {
     "name": "create_notion_page",
     "description": "Create a new page in a Notion database.",
@@ -1827,6 +1840,42 @@ def _send_slack_message(inputs: dict, token: str) -> str:
     return f"Message sent to {channel}"
 
 
+def _send_teams_message(inputs: dict) -> str:
+    """Send a message to Microsoft Teams via Prismatic webhook."""
+    from tools.prismatic_handler import trigger_prismatic_flow
+    
+    message_content = inputs.get("message_content", "").strip()
+    target_channel = inputs.get("target_channel", "").strip()
+    
+    if not message_content:
+        raise Exception("message_content cannot be empty")
+    if not target_channel:
+        raise Exception("target_channel cannot be empty")
+    
+    # Get the webhook URL from environment variable
+    webhook_url = os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL")
+    if not webhook_url:
+        raise Exception(
+            "PRISMATIC_TEAMS_WEBHOOK_URL environment variable not set. "
+            "Set it to your Prismatic Teams webhook URL."
+        )
+    
+    # Build payload for Teams message
+    payload = {
+        "message": message_content,
+        "channel": target_channel,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    # Trigger the Prismatic flow
+    success, message = trigger_prismatic_flow(webhook_url, payload)
+    
+    if success:
+        return f"Teams message sent to {target_channel}: {message}"
+    else:
+        raise Exception(f"Failed to send Teams message: {message}")
+
+
 def _create_notion_page(inputs: dict, token: str) -> str:
     r = httpx.post(
         "https://api.notion.com/v1/pages",
@@ -2169,6 +2218,11 @@ def _register_tool_registry() -> None:
                 SEND_SLACK_MESSAGE_TOOL,
                 lambda inputs, env: _send_slack_message(inputs, env["slack_token"]),
                 lambda env: bool(env.get("slack_token")),
+            ),
+            (
+                SEND_TEAMS_MESSAGE_TOOL,
+                lambda inputs, env: _send_teams_message(inputs),
+                lambda env: bool(os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL")),
             ),
             (
                 CREATE_NOTION_PAGE_TOOL,

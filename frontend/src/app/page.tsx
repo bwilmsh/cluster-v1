@@ -31,6 +31,7 @@ export default function HomePage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [message, setMessage] = useState('')
+  const [isTransitioning, setIsTransitioning] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
 
@@ -47,6 +48,11 @@ export default function HomePage() {
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!selectedAgent) return
+    router.prefetch(`/agents/${selectedAgent.id}`)
+  }, [selectedAgent, router])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -81,10 +87,14 @@ export default function HomePage() {
 
   const handleSend = () => {
     const trimmed = message.trim()
-    if (!trimmed || !selectedAgent) return
+    if (!trimmed || !selectedAgent || isTransitioning) return
     // Store the initial message for the agent page to auto-send
     sessionStorage.setItem(`agent-init-${selectedAgent.id}`, trimmed)
-    router.push(`/agents/${selectedAgent.id}`)
+    setIsTransitioning(true)
+    // Small UI fade makes the route handoff feel smooth instead of abrupt.
+    setTimeout(() => {
+      router.push(`/agents/${selectedAgent.id}`)
+    }, 140)
   }
 
   const handleMentionSelect = (agent: Agent) => {
@@ -121,6 +131,11 @@ export default function HomePage() {
         justifyContent: 'center',
         padding: '0 24px',
         backgroundColor: 'var(--bg-primary)',
+        opacity: isTransitioning ? 0.72 : 1,
+        transform: isTransitioning ? 'translateY(3px)' : 'translateY(0)',
+        filter: isTransitioning ? 'blur(0.8px)' : 'none',
+        transition: 'opacity 160ms ease, transform 160ms ease, filter 160ms ease',
+        pointerEvents: isTransitioning ? 'none' : 'auto',
       }}
     >
       {/* Heading */}

@@ -2,23 +2,26 @@
 
 import { useRef, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { api, Agent, AutomationListResponse, GroupChat, Widget } from '@/lib/api'
+import { api, Agent, AutomationListResponse, GroupChat } from '@/lib/api'
 import { AgentCard } from '@/components/AgentCard'
 import { DocumentUpload, UploadedDocument } from '@/components/DocumentUpload'
-import { WidgetRenderer } from '@/components/WidgetRenderer'
 
-// ─── Widget Card ─────────────────────────────────────────────────────────────
+type DashboardSectionId = 'todayFocus' | 'upcomingEvents' | 'automationPulse' | 'documentsInbox'
 
-function sizeClass(size: Widget['size']) {
-  if (size === 'sm') return 'col-span-1'
-  if (size === 'lg') return 'col-span-2 sm:col-span-3'
-  return 'col-span-1 sm:col-span-2'
+type SectionVisibility = Record<DashboardSectionId, boolean>
+
+const DEFAULT_SECTION_VISIBILITY: SectionVisibility = {
+  todayFocus: true,
+  upcomingEvents: true,
+  automationPulse: true,
+  documentsInbox: true,
 }
 
-function heightClass(size: Widget['size']) {
-  if (size === 'sm') return 'h-36'
-  if (size === 'lg') return 'h-64'
-  return 'h-48'
+const SECTION_LABELS: Record<DashboardSectionId, string> = {
+  todayFocus: 'Today Focus',
+  upcomingEvents: 'Upcoming Events',
+  automationPulse: 'Automation Pulse',
+  documentsInbox: 'Documents Inbox',
 }
 
 function formatShortDate(value: string | null | undefined) {
@@ -33,43 +36,6 @@ function formatShortDate(value: string | null | undefined) {
   }).format(d)
 }
 
-interface WidgetCardProps {
-  widget: Widget
-  onDelete: (id: string) => void
-  onDragStart: (id: string) => void
-  onDragOver: (id: string) => void
-  onDrop: () => void
-  isDragging: boolean
-}
-
-function WidgetCard({ widget, onDelete, onDragStart, onDragOver, onDrop, isDragging }: WidgetCardProps) {
-  return (
-    <div
-      draggable
-      onDragStart={() => onDragStart(widget.id)}
-      onDragOver={(e) => { e.preventDefault(); onDragOver(widget.id) }}
-      onDrop={onDrop}
-      className={`
-        ${sizeClass(widget.size)} ${heightClass(widget.size)}
-        relative group bg-white/[0.03] border border-white/8 rounded-2xl p-4 cursor-grab active:cursor-grabbing
-        transition-opacity ${isDragging ? 'opacity-30' : 'opacity-100'}
-      `}
-    >
-      <div className="flex items-start justify-between mb-3">
-        <h3 className="text-white/60 text-xs font-medium uppercase tracking-wide truncate pr-2">{widget.title}</h3>
-        <button
-          onClick={() => onDelete(widget.id)}
-          className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-white/70 transition-all flex-shrink-0 text-lg leading-none -mt-0.5"
-        >
-          ×
-        </button>
-      </div>
-      <div className="overflow-hidden" style={{ height: 'calc(100% - 2rem)' }}>
-        <WidgetRenderer widget={widget} />
-      </div>
-    </div>
-  )
-}
 
 interface SnapshotStatProps {
   label: string
@@ -91,7 +57,6 @@ function SnapshotStat({ label, value, hint }: SnapshotStatProps) {
 
 export default function DashboardPage() {
   const [agents, setAgents] = useState<Agent[]>([])
-  const [widgets, setWidgets] = useState<Widget[]>([])
   const [automationSummary, setAutomationSummary] = useState<AutomationListResponse>({
     automations: [],
     runsToday: 0,
@@ -100,33 +65,92 @@ export default function DashboardPage() {
   const [groupChats, setGroupChats] = useState<GroupChat[]>([])
   const [loading, setLoading] = useState(true)
   const [latestDocument, setLatestDocument] = useState<UploadedDocument | null>(null)
-  const [agentsExpanded, setAgentsExpanded] = useState(false)
   const [upcomingEvents, setUpcomingEvents] = useState<Array<{ title: string; start_time: string; category?: string }>>([])
   const [dashboardName, setDashboardName] = useState('Dashboard')
   const [isEditingName, setIsEditingName] = useState(false)
+  const [agentsExpanded, setAgentsExpanded] = useState(true)
   const [tempName, setTempName] = useState('')
+  const [showAddMenu, setShowAddMenu] = useState(false)
+  const [sectionVisibility, setSectionVisibility] = useState<SectionVisibility>(DEFAULT_SECTION_VISIBILITY)
+  const addMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const dragId = useRef<string | null>(null)
-  const dragOverId = useRef<string | null>(null)
+  const handleThemeToggle = () => {
+    const htmlElement = document.documentElement
+    const currentTheme = htmlElement.classList.contains('light-mode') ? 'light' : 'dark'
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light'
+    
+    if (newTheme === 'light') {
+      htmlElement.classList.add('light-mode')
+      htmlElement.classList.remove('dark-mode')
+    } else {
+      htmlElement.classList.add('dark-mode')
+      htmlElement.classList.remove('light-mode')
+    }
+    
+    localStorage.setItem('theme', newTheme)
+  }
+
+  const [currentTheme, setCurrentTheme] = useState<'light' | 'dark'>('dark')
+
+  useEffect(() => {
+    const theme = localStorage.getItem('theme') as 'light' | 'dark' | null
+    setCurrentTheme(theme || 'dark')
+  }, [])
+
+  useEffect(() => {
+    // Listen for theme changes on the document
+    const observer = new MutationObserver(() => {
+      const htmlElement = document.documentElement
+      const isLight = htmlElement.classList.contains('light-mode')
+      setCurrentTheme(isLight ? 'light' : 'dark')
+    })
+
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const saved = localStorage.getItem('dashboardName')
     if (saved) setDashboardName(saved)
+    const savedSections = localStorage.getItem('dashboardSections')
+    if (savedSections) {
+      try {
+        const parsed = JSON.parse(savedSections) as Partial<SectionVisibility>
+        setSectionVisibility({ ...DEFAULT_SECTION_VISIBILITY, ...parsed })
+      } catch {
+        setSectionVisibility(DEFAULT_SECTION_VISIBILITY)
+      }
+    }
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('dashboardSections', JSON.stringify(sectionVisibility))
+  }, [sectionVisibility])
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!addMenuRef.current) return
+      if (!addMenuRef.current.contains(event.target as Node)) {
+        setShowAddMenu(false)
+      }
+    }
+
+    if (showAddMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showAddMenu])
 
   useEffect(() => {
     Promise.all([
       api.agents.list(),
-      api.widgets.list(),
       api.automations.list().catch(() => ({ automations: [], runsToday: 0, dailyLimit: 10 })),
       api.groupChats.list().catch(() => []),
       fetch('/api/appointments?upcoming=true&limit=10').then(r => r.json()).catch(() => []),
     ])
-      .then(([a, w, auto, chats, appointments]) => {
+      .then(([a, auto, chats, appointments]) => {
         const agentList = Array.isArray(a) ? a : (a as { agents?: Agent[]; data?: Agent[] })?.agents ?? (a as { agents?: Agent[]; data?: Agent[] })?.data ?? []
-        const widgetList = Array.isArray(w) ? w : (w as { widgets?: Widget[]; data?: Widget[] })?.widgets ?? (w as { widgets?: Widget[]; data?: Widget[] })?.data ?? []
         setAgents(agentList)
-        setWidgets(widgetList)
         setAutomationSummary(auto)
         setGroupChats(chats)
         const appointmentList = Array.isArray(appointments) ? appointments : []
@@ -140,36 +164,12 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleDeleteAgent(id: string) {
-    if (!confirm('Remove this agent?')) return
-    await api.agents.delete(id)
-    setAgents((prev) => prev.filter((a) => a.id !== id))
+  function hideSection(sectionId: DashboardSectionId) {
+    setSectionVisibility((prev) => ({ ...prev, [sectionId]: false }))
   }
 
-  async function handleDeleteWidget(id: string) {
-    await api.widgets.delete(id)
-    setWidgets((prev) => prev.filter((w) => w.id !== id))
-  }
-
-  function handleDragStart(id: string) { dragId.current = id }
-  function handleDragOver(id: string) { dragOverId.current = id }
-
-  async function handleDrop() {
-    const fromId = dragId.current
-    const toId = dragOverId.current
-    dragId.current = null
-    dragOverId.current = null
-    if (!fromId || !toId || fromId === toId) return
-
-    const reordered = [...widgets]
-    const fromIdx = reordered.findIndex((w) => w.id === fromId)
-    const toIdx = reordered.findIndex((w) => w.id === toId)
-    const [moved] = reordered.splice(fromIdx, 1)
-    reordered.splice(toIdx, 0, moved)
-
-    const withOrder = reordered.map((w, i) => ({ ...w, order: i }))
-    setWidgets(withOrder)
-    await api.widgets.reorder(withOrder.map((w) => ({ id: w.id, order: w.order })))
+  function showSection(sectionId: DashboardSectionId) {
+    setSectionVisibility((prev) => ({ ...prev, [sectionId]: true }))
   }
 
   function handleSaveName(newName: string) {
@@ -189,9 +189,58 @@ export default function DashboardPage() {
   const recentAutomation = automationSummary.automations
     .filter((a) => a.lastRunAt)
     .sort((a, b) => new Date(b.lastRunAt as string).getTime() - new Date(a.lastRunAt as string).getTime())[0] || null
+  const hiddenSections = (Object.keys(sectionVisibility) as DashboardSectionId[]).filter((key) => !sectionVisibility[key])
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto relative">
+      <div className="fixed top-5 right-5 sm:top-6 sm:right-6 z-30 flex items-center gap-3">
+        {/* Theme toggle button */}
+        <button
+          type="button"
+          onClick={handleThemeToggle}
+          className="w-11 h-11 rounded-full border border-white/20 dark:border-white/20 light:border-gray-300 bg-black/45 dark:bg-black/45 light:bg-gray-200/40 text-white dark:text-white light:text-gray-800 text-lg leading-none hover:bg-black/70 dark:hover:bg-black/70 light:hover:bg-gray-200/60 hover:border-white/35 dark:hover:border-white/35 light:hover:border-gray-300 transition-colors flex items-center justify-center"
+          aria-label={`Switch to ${currentTheme === 'light' ? 'dark' : 'light'} mode`}
+          title={`Switch to ${currentTheme === 'light' ? 'dark' : 'light'} mode`}
+        >
+          {currentTheme === 'light' ? '🌙' : '☀️'}
+        </button>
+
+        {/* Add menu button */}
+        <div ref={addMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setShowAddMenu((prev) => !prev)}
+            className="w-11 h-11 rounded-full border border-white/20 bg-black/45 text-white text-2xl leading-none hover:bg-black/70 hover:border-white/35 transition-colors"
+            aria-label="Add to dashboard"
+            title="Add to dashboard"
+          >
+            +
+          </button>
+
+          {showAddMenu ? (
+            <div className="mt-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-2xl border border-white/15 bg-[#0d1117]/95 backdrop-blur p-3 shadow-2xl absolute right-0">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-white/45 mb-2">Restore Sections</p>
+              {hiddenSections.length === 0 ? (
+                <p className="text-xs text-white/45">All sections are visible.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {hiddenSections.map((sectionId) => (
+                    <button
+                      key={sectionId}
+                      type="button"
+                      onClick={() => showSection(sectionId)}
+                      className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-sm text-white/85 hover:bg-white/[0.07] hover:border-white/20 transition-colors"
+                    >
+                      + {SECTION_LABELS[sectionId]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
       <div className="p-6 sm:p-8 max-w-6xl mx-auto">
         <section className="mb-8 rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-transparent p-6 sm:p-7">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -232,13 +281,7 @@ export default function DashboardPage() {
                 </h1>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <Link
-                href="/cluster"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/15 text-white/75 hover:text-white hover:border-white/30 text-sm transition-colors"
-              >
-                Ask Cluster
-              </Link>
+            <div className="flex flex-wrap items-center gap-2.5 pr-14 sm:pr-16">
               <Link
                 href="/agents/new"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
@@ -273,6 +316,47 @@ export default function DashboardPage() {
           ) : null}
         </section>
 
+        <section className="mb-10">
+          <div
+            className="flex items-center justify-between mb-5 cursor-pointer"
+            onClick={() => setAgentsExpanded(!agentsExpanded)}
+          >
+            <div className="flex items-center gap-2">
+              <span className={`text-white/60 transition-transform ${ agentsExpanded ? 'rotate-180' : ''}`}>
+                ▼
+              </span>
+              <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest">
+                Your Agents ({agents.length})
+              </h2>
+            </div>
+            <Link href="/agents/new" className="text-xs text-white/40 hover:text-white/70 transition-colors" onClick={(e) => e.stopPropagation()}>
+              + Hire new
+            </Link>
+          </div>
+
+          {agentsExpanded && (
+            <>
+              {agents.length === 0 ? (
+                <div className="text-center py-16 rounded-2xl border border-dashed border-white/8">
+                  <p className="text-white/25 text-sm mb-4">No agents hired yet</p>
+                  <Link
+                    href="/agents/new"
+                    className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+                  >
+                    Hire your first agent
+                  </Link>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                  {agents.map((agent) => (
+                    <AgentCard key={agent.id} agent={agent} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+
         {loading ? (
           <div className="flex items-center gap-2 text-white/25 text-sm py-12">
             <span className="w-1.5 h-1.5 bg-white/25 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -281,42 +365,20 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-10">
-              <div className="xl:col-span-2 rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-sm font-semibold text-white/85 uppercase tracking-widest">Operations Board</h2>
-                    <p className="text-xs text-white/45 mt-1">Drag cards to reorder what matters most this week.</p>
-                  </div>
-                  <span className="text-xs text-white/35">{widgets.length} widget{widgets.length === 1 ? '' : 's'}</span>
+            {sectionVisibility.todayFocus ? (
+            <section className="mb-10 rounded-2xl border border-white/10 bg-gradient-to-b from-cyan-400/10 to-white/[0.02] p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-white/90 uppercase tracking-widest">Today Focus</h3>
+                  <button
+                    type="button"
+                    onClick={() => hideSection('todayFocus')}
+                    className="text-white/40 hover:text-white/80 transition-colors"
+                    aria-label="Remove Today Focus section"
+                    title="Remove section"
+                  >
+                    ×
+                  </button>
                 </div>
-
-                {widgets.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-min">
-                    {widgets.map((w) => (
-                      <WidgetCard
-                        key={w.id}
-                        widget={w}
-                        onDelete={handleDeleteWidget}
-                        onDragStart={handleDragStart}
-                        onDragOver={handleDragOver}
-                        onDrop={handleDrop}
-                        isDragging={dragId.current === w.id}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-white/10 py-10 text-center">
-                    <p className="text-white/30 text-sm mb-2">No dashboard widgets yet</p>
-                    <Link href="/cluster" className="text-white/50 hover:text-white/75 text-sm transition-colors">
-                      Ask Cluster to build your dashboard →
-                    </Link>
-                  </div>
-                )}
-              </div>
-
-              <aside className="rounded-2xl border border-white/10 bg-gradient-to-b from-cyan-400/10 to-white/[0.02] p-5">
-                <h3 className="text-sm font-semibold text-white/90 uppercase tracking-widest">Today Focus</h3>
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl border border-white/10 bg-black/20 px-3.5 py-3">
                     <p className="text-[11px] text-white/45 uppercase tracking-wide">Next move</p>
@@ -342,64 +404,35 @@ export default function DashboardPage() {
                     <Link href="/workflows" className="rounded-lg border border-white/12 px-3 py-2 text-sm text-white/75 hover:text-white hover:border-white/25 transition-colors">
                       Open workflows
                     </Link>
-                    <Link href="/cluster" className="rounded-lg border border-white/12 px-3 py-2 text-sm text-white/75 hover:text-white hover:border-white/25 transition-colors">
-                      Ask Cluster for a weekly briefing
+                    <Link href="/scheduler" className="rounded-lg border border-white/12 px-3 py-2 text-sm text-white/75 hover:text-white hover:border-white/25 transition-colors">
+                      Open automations
                     </Link>
                   </div>
                 </div>
-              </aside>
-            </div>
+              </section>
+              ) : null}
 
-            <section className="mb-10">
-              <div
-                className="flex items-center justify-between mb-5 cursor-pointer"
-                onClick={() => setAgentsExpanded(!agentsExpanded)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`text-white/60 transition-transform ${ agentsExpanded ? 'rotate-180' : ''}`}>
-                    ▼
-                  </span>
-                  <h2 className="text-xs font-semibold text-white/40 uppercase tracking-widest">
-                    Your Agents ({agents.length})
-                  </h2>
-                </div>
-                <Link href="/agents/new" className="text-xs text-white/40 hover:text-white/70 transition-colors" onClick={(e) => e.stopPropagation()}>
-                  + Hire new
-                </Link>
-              </div>
-
-              {agentsExpanded && (
-                <>
-                  {agents.length === 0 ? (
-                    <div className="text-center py-16 rounded-2xl border border-dashed border-white/8">
-                      <p className="text-white/25 text-sm mb-4">No agents hired yet</p>
-                      <Link
-                        href="/agents/new"
-                        className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
-                      >
-                        Hire your first agent
-                      </Link>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                      {agents.map((agent) => (
-                        <AgentCard key={agent.id} agent={agent} onDelete={handleDeleteAgent} />
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-
+            {sectionVisibility.upcomingEvents ? (
             <section className="mb-10 rounded-2xl border border-white/10 bg-gradient-to-b from-purple-400/10 to-white/[0.02] p-5">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-xs font-semibold text-white/45 uppercase tracking-widest">Upcoming Events</h2>
                   <p className="text-sm text-white/70 mt-1">Next events on your calendar.</p>
                 </div>
-                <Link href="/calendar" className="text-xs text-white/50 hover:text-white/75 transition-colors">
-                  View calendar →
-                </Link>
+                <div className="flex items-center gap-3">
+                  <Link href="/calendar" className="text-xs text-white/50 hover:text-white/75 transition-colors">
+                    View calendar →
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => hideSection('upcomingEvents')}
+                    className="text-white/40 hover:text-white/80 transition-colors"
+                    aria-label="Remove Upcoming Events section"
+                    title="Remove section"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
 
               {upcomingEvents.length === 0 ? (
@@ -434,19 +467,32 @@ export default function DashboardPage() {
                 </div>
               )}
             </section>
+            ) : null}
 
+            {sectionVisibility.automationPulse ? (
             <section className="mb-10 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-xs font-semibold text-white/45 uppercase tracking-widest">Automation Pulse</h2>
                   <p className="text-sm text-white/65 mt-1">Keep recurring tasks healthy before they become manual fire drills.</p>
                 </div>
-                <span className="text-xs text-white/45">{automationSummary.automations.length} total automations</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-white/45">{automationSummary.automations.length} total automations</span>
+                  <button
+                    type="button"
+                    onClick={() => hideSection('automationPulse')}
+                    className="text-white/40 hover:text-white/80 transition-colors"
+                    aria-label="Remove Automation Pulse section"
+                    title="Remove section"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
 
               {automationSummary.automations.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-white/12 px-4 py-5 text-sm text-white/50">
-                  No automations yet. Ask Cluster to create one for weekly reporting, reminders, or outreach follow-ups.
+                  No automations yet. Create one for weekly reporting, reminders, or outreach follow-ups.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -470,13 +516,24 @@ export default function DashboardPage() {
                 </div>
               )}
             </section>
+            ) : null}
 
+            {sectionVisibility.documentsInbox ? (
             <section className="rounded-2xl border border-white/10 bg-gradient-to-b from-emerald-400/10 to-white/[0.02] p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
                   <h2 className="text-xs font-semibold text-white/45 uppercase tracking-widest">Documents Inbox</h2>
                   <p className="text-sm text-white/70 mt-1">Upload invoices, contracts, and reports for summary, search, and date extraction.</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => hideSection('documentsInbox')}
+                  className="text-white/40 hover:text-white/80 transition-colors"
+                  aria-label="Remove Documents Inbox section"
+                  title="Remove section"
+                >
+                  ×
+                </button>
               </div>
               <DocumentUpload onUploaded={setLatestDocument} />
               {latestDocument ? (
@@ -485,6 +542,7 @@ export default function DashboardPage() {
                 </div>
               ) : null}
             </section>
+            ) : null}
           </>
         )}
       </div>

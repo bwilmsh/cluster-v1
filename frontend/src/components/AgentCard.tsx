@@ -36,10 +36,9 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   agent: Agent
-  onDelete: (id: string) => void
 }
 
-export function AgentCard({ agent, onDelete }: Props) {
+export function AgentCard({ agent }: Props) {
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -74,7 +73,7 @@ export function AgentCard({ agent, onDelete }: Props) {
 
   return (
     <div
-      className={`group relative flex flex-col rounded-xl bg-surface-raised border border-surface-border border-l-4 ${colors.border} p-5 hover:-translate-y-0.5 hover:border-white/15 hover:shadow-lg hover:shadow-black/20 transition-all duration-200 cursor-pointer`}
+      className={`group relative flex flex-col rounded-xl bg-surface-raised border border-surface-border border-l-4 ${colors.border} p-5 hover:-translate-y-0.5 hover:border-white/15 dark:hover:border-white/15 light:hover:border-gray-400 hover:shadow-lg hover:shadow-black/20 dark:hover:shadow-black/20 light:hover:shadow-gray-400/10 transition-all duration-200 cursor-pointer`}
       onClick={() => router.push(`/agents/${agent.id}`)}
     >
       {/* Header row */}
@@ -87,9 +86,9 @@ export function AgentCard({ agent, onDelete }: Props) {
             {getInitials(agent.name)}
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-white text-sm leading-tight truncate">{agent.name}</p>
+            <p className="font-semibold text-white dark:text-white light:text-gray-900 text-sm leading-tight truncate">{agent.name}</p>
             {role && (
-              <p className="text-xs text-white/40 mt-0.5 truncate">{role}</p>
+              <p className="text-xs text-white/40 dark:text-white/40 light:text-gray-500 mt-0.5 truncate">{role}</p>
             )}
           </div>
         </div>
@@ -98,7 +97,7 @@ export function AgentCard({ agent, onDelete }: Props) {
         <div ref={menuRef} className="shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-white/25 hover:text-white/60 hover:bg-white/8 transition-colors opacity-0 group-hover:opacity-100"
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-white/25 dark:text-white/25 light:text-gray-400 hover:text-white/60 dark:hover:text-white/60 light:hover:text-gray-700 hover:bg-white/8 dark:hover:bg-white/8 light:hover:bg-gray-200/40 transition-colors opacity-0 group-hover:opacity-100"
           >
             <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
               <circle cx="8" cy="3" r="1.5" />
@@ -108,19 +107,12 @@ export function AgentCard({ agent, onDelete }: Props) {
           </button>
 
           {menuOpen && (
-            <div className="absolute right-3 top-12 z-20 bg-surface-raised border border-surface-border rounded-xl shadow-xl shadow-black/40 py-1 min-w-[140px]">
+            <div className="absolute right-3 top-12 z-20 bg-surface-raised border border-surface-border rounded-xl shadow-xl shadow-black/40 dark:shadow-black/40 light:shadow-gray-400/20 py-1 min-w-[140px]">
               <button
                 onClick={() => { setMenuOpen(false); router.push(`/agents/${agent.id}`) }}
-                className="w-full text-left px-4 py-2 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                className="w-full text-left px-4 py-2 text-sm text-white/70 dark:text-white/70 light:text-gray-600 hover:text-white dark:hover:text-white light:hover:text-gray-900 hover:bg-white/5 dark:hover:bg-white/5 light:hover:bg-gray-200/30 transition-colors"
               >
                 Open Chat
-              </button>
-              <div className="h-px bg-surface-border mx-2 my-1" />
-              <button
-                onClick={() => { setMenuOpen(false); onDelete(agent.id) }}
-                className="w-full text-left px-4 py-2 text-sm text-rose-400 hover:text-rose-300 hover:bg-white/5 transition-colors"
-              >
-                Delete
               </button>
             </div>
           )}
@@ -129,7 +121,7 @@ export function AgentCard({ agent, onDelete }: Props) {
 
       {/* Description */}
       {description && (
-        <p className="text-xs text-white/35 leading-relaxed line-clamp-2 mb-4 flex-1">
+        <p className="text-xs text-white/35 dark:text-white/35 light:text-gray-500 leading-relaxed line-clamp-2 mb-4 flex-1">
           {description}
         </p>
       )}
@@ -137,12 +129,12 @@ export function AgentCard({ agent, onDelete }: Props) {
       {/* Footer */}
       <div className="flex items-center justify-between mt-auto pt-3 border-t border-surface-border">
         <div className="flex items-center gap-1.5">
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-emerald-400' : 'bg-white/20'}`} />
-          <span className={`text-[11px] ${isActive ? 'text-emerald-400/80' : 'text-white/25'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-emerald-400' : 'bg-white/20 dark:bg-white/20 light:bg-gray-300'}`} />
+          <span className={`text-[11px] ${isActive ? 'text-emerald-400/80' : 'text-white/25 dark:text-white/25 light:text-gray-400'}`}>
             {agent.status === 'setting_up' ? 'Setting up' : isActive ? 'Active' : 'Offline'}
           </span>
         </div>
-        <span className="text-[11px] text-white/25">{timeAgo(agent.createdAt)}</span>
+        <span className="text-[11px] text-white/25 dark:text-white/25 light:text-gray-400">{timeAgo(agent.createdAt)}</span>
       </div>
     </div>
   )
