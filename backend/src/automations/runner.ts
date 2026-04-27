@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
-import { getUserIntegrationTokens } from '../routes/integrations'
+import { getUserIntegrationContext } from '../lib/integrationContext'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 export const DAILY_RUN_LIMIT = 10
@@ -33,8 +33,9 @@ export async function runAutomation(automationId: string): Promise<void> {
     return
   }
 
-  // Get integration tokens
-  const integrationTokens = await getUserIntegrationTokens(automation.userId).catch(() => ({} as Record<string, string>))
+  // Get integration tokens and connected capability metadata
+  const integrationContext = await getUserIntegrationContext(automation.userId).catch(() => ({ tokens: {}, connectedIntegrations: [] }))
+  const integrationTokens = integrationContext.tokens
 
   const goal = automation.goal || automation.name
 
@@ -51,6 +52,7 @@ export async function runAutomation(automationId: string): Promise<void> {
           integrationTokens['google_access_token'] ? 'google' : null,
           integrationTokens['slack_token'] ? 'slack' : null,
           integrationTokens['notion_token'] ? 'notion' : null,
+          integrationContext.connectedIntegrations.some((integration) => integration.provider === 'teams') ? 'teams' : null,
         ].filter(Boolean),
       }),
     })
@@ -111,6 +113,7 @@ export async function runAutomation(automationId: string): Promise<void> {
         memory,
         goal,
         integrations: integrationTokens,
+        connected_integrations: integrationContext.connectedIntegrations,
       }),
     })
 

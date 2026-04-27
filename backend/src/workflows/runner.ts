@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { prisma, getDefaultUser } from '../db'
-import { getUserIntegrationTokens } from '../routes/integrations'
+import { getUserIntegrationContext } from '../lib/integrationContext'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
@@ -86,7 +86,8 @@ export async function runWorkflow(workflowId: string): Promise<void> {
   const user = await getDefaultUser().catch(() => null)
   if (!user) return
 
-  const integrationTokens = await getUserIntegrationTokens(user.id).catch(() => ({} as Record<string, string>))
+  const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {}, connectedIntegrations: [] }))
+  const integrationTokens = integrationContext.tokens
 
   const run = await prisma.workflowRun.create({
     data: { workflowId, status: 'running' },
@@ -115,6 +116,7 @@ export async function runWorkflow(workflowId: string): Promise<void> {
         memory: (agent as any)?.memory ?? '',
         goal,
         integrations: integrationTokens,
+        connected_integrations: integrationContext.connectedIntegrations,
       }),
     })
 

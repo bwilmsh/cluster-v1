@@ -1,6 +1,5 @@
 'use client'
 
-import { supabase } from './supabaseClient'
 import { useEffect, useMemo, useState } from 'react'
 import Calendar from 'react-calendar'
 
@@ -10,22 +9,21 @@ type Appointment = {
   end_time?: string
   status?: string
   customer_name?: string
+  customer_email?: string
   note?: string
   category?: string
 }
 
-type EventRow = {
-  id: number | string
-  title?: string | null
-  event_time?: string | null
-  category?: string | null
-}
+const EVENT_CATEGORIES = ['Business', 'Personal', 'Chore']
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
 
-const EVENT_CATEGORIES = ['Work', 'Personal', 'Medical', 'Travel', 'Family', 'Other']
+type CalendarViewMode = 'month' | 'day'
 
 function EventDrawer({
   open,
+  anchor,
   dateLabel,
+  eventTitle,
   eventNote,
   eventTime,
   eventCategory,
@@ -33,12 +31,15 @@ function EventDrawer({
   savingEvent,
   onClose,
   onSubmit,
+  onEventTitleChange,
   onEventNoteChange,
   onEventTimeChange,
   onEventCategoryChange,
 }: {
   open: boolean
+  anchor: { x: number; y: number }
   dateLabel: string
+  eventTitle: string
   eventNote: string
   eventTime: string
   eventCategory: string
@@ -46,12 +47,17 @@ function EventDrawer({
   savingEvent: boolean
   onClose: () => void
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void
+  onEventTitleChange: (value: string) => void
   onEventNoteChange: (value: string) => void
   onEventTimeChange: (value: string) => void
   onEventCategoryChange: (value: string) => void
 }) {
   return (
-    <aside className={`cluster-event-drawer ${open ? 'is-open' : ''}`} aria-hidden={!open}>
+    <aside
+      className={`cluster-event-drawer ${open ? 'is-open' : ''}`}
+      aria-hidden={!open}
+      style={{ left: `${anchor.x}px`, top: `${anchor.y}px` }}
+    >
       <div className="cluster-event-drawer-shell">
         <div className="cluster-event-drawer-header">
           <div>
@@ -68,9 +74,20 @@ function EventDrawer({
             <span>Event Name</span>
             <input
               type="text"
+              value={eventTitle}
+              onChange={(e) => onEventTitleChange(e.target.value)}
+              placeholder="Lunch with Sarah"
+              required
+            />
+          </label>
+
+          <label>
+            <span>Notes</span>
+            <textarea
               value={eventNote}
               onChange={(e) => onEventNoteChange(e.target.value)}
-              placeholder="What is this event?"
+              placeholder="Add details, links, agenda, or reminders"
+              rows={3}
             />
           </label>
 
@@ -151,36 +168,11 @@ function toDateInputValue(value: Date): string {
   return `${y}-${m}-${d}`
 }
 
-function buildIsoFromDateTime(date: string, time: string): string {
-  return `${date}T${time}:00`
-}
-
-async function fetchEvents(): Promise<Appointment[]> {
-  const { data, error } = await supabase.from('events').select('*')
-  if (error) {
-    throw error
-  }
-
-  return (data ?? []).map((row) => {
-    const eventRow = row as EventRow
-    return {
-      id: eventRow.id,
-      start_time: String(eventRow.event_time ?? ''),
-      note: eventRow.title ?? undefined,
-      category: eventRow.category ?? undefined,
-    }
-  })
-}
-
-function normalizedCategory(value?: string) {
+function normalizedCategory(value?: string): string {
   return String(value ?? '').trim().toLowerCase()
 }
 
-function categoryPriority(value?: string) {
-  return normalizedCategory(value) === 'business' ? 0 : 1
-}
-
-function categoryBadgeClassName(value?: string) {
+function categoryBadgeClassName(value?: string): string {
   const category = normalizedCategory(value)
   if (category === 'business') return 'cluster-event-category-badge is-business'
   if (category === 'personal') return 'cluster-event-category-badge is-personal'
@@ -188,30 +180,57 @@ function categoryBadgeClassName(value?: string) {
   return 'cluster-event-category-badge'
 }
 
+function hourLabel(hour: number): string {
+  const sample = new Date()
+  sample.setHours(hour, 0, 0, 0)
+  return sample.toLocaleTimeString(undefined, { hour: 'numeric' })
+}
+
+async function fetchEvents(): Promise<Appointment[]> {
+  const response = await fetch('/api/appointments?limit=500', {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+    const message = typeof payload?.error === 'string' ? payload.error : 'Failed to load appointments'
+    const details = typeof payload?.details === 'string' ? payload.details : ''
+    throw new Error(details ? `${message}: ${details}` : message)
+  }
+
+  const raw = (await response.json()) as unknown
+  return normalizeArray<Appointment>(raw)
+}
+
 export function ClusterDashboard() {
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('month')
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [eventDate, setEventDate] = useState<string>(toDateInputValue(new Date()))
   const [eventTime, setEventTime] = useState<string>('09:00')
+  const [eventTitle, setEventTitle] = useState<string>('')
   const [eventNote, setEventNote] = useState<string>('')
-  const [eventCategory, setEventCategory] = useState<string>('Personal')
+  const [eventCategory, setEventCategory] = useState<string>('Business')
   const [showEventModal, setShowEventModal] = useState(false)
+  const [drawerAnchor, setDrawerAnchor] = useState<{ x: number; y: number }>({ x: 320, y: 180 })
   const [savingEvent, setSavingEvent] = useState(false)
   const [saveEventError, setSaveEventError] = useState<string | null>(null)
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null)
+  const [resettingEvents, setResettingEvents] = useState(false)
+  const [hoveredTimePreview, setHoveredTimePreview] = useState<{ hour: number; minute: number } | null>(null)
 
   useEffect(() => {
     async function loadData() {
       setLoading(true)
       setError(null)
-
       try {
         const events = await fetchEvents()
         setAppointments(events)
       } catch {
-        setError('Could not load events from Supabase.')
+        setError('Could not load calendar events.')
       } finally {
         setLoading(false)
       }
@@ -226,39 +245,35 @@ export function ClusterDashboard() {
 
   const bookedDateSet = useMemo(() => {
     const set = new Set<string>()
-    for (const appt of appointments) {
-      const d = new Date(appt.start_time)
-      if (!Number.isNaN(d.getTime())) {
-        set.add(dateKey(d))
-      }
+    for (const event of appointments) {
+      const d = new Date(event.start_time)
+      if (!Number.isNaN(d.getTime())) set.add(dateKey(d))
     }
     return set
   }, [appointments])
 
   const selectedDateAppointments = useMemo(() => {
-    const day = dateKey(selectedDate)
+    const key = dateKey(selectedDate)
     return appointments
-      .filter((a) => {
-        const d = new Date(a.start_time)
-        return !Number.isNaN(d.getTime()) && dateKey(d) === day
+      .filter((event) => {
+        const d = new Date(event.start_time)
+        return !Number.isNaN(d.getTime()) && dateKey(d) === key
       })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
   }, [appointments, selectedDate])
 
-  const upcomingEvents = useMemo(() => {
-    const now = Date.now()
-    return appointments
-      .filter((a) => {
-        const d = new Date(a.start_time)
-        return !Number.isNaN(d.getTime()) && d.getTime() >= now
-      })
-      .sort((a, b) => {
-        const byCategory = categoryPriority(a.category) - categoryPriority(b.category)
-        if (byCategory !== 0) return byCategory
-        return new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-      })
-      .slice(0, 8)
-  }, [appointments])
+  const eventsByHour = useMemo(() => {
+    const map = new Map<number, Appointment[]>()
+    for (const event of selectedDateAppointments) {
+      const d = new Date(event.start_time)
+      if (Number.isNaN(d.getTime())) continue
+      const hour = d.getHours()
+      const items = map.get(hour) ?? []
+      items.push(event)
+      map.set(hour, items)
+    }
+    return map
+  }, [selectedDateAppointments])
 
   const calendarTileClass = ({ date, view }: { date: Date; view: string }): string | null => {
     if (view !== 'month') return null
@@ -279,26 +294,37 @@ export function ClusterDashboard() {
       return
     }
 
+    const normalizedTitle = eventTitle.trim()
+    if (!normalizedTitle) {
+      setSaveEventError('Event name is required.')
+      return
+    }
+
     setSavingEvent(true)
     try {
-      const eventTimeIso = buildIsoFromDateTime(eventDate, eventTime)
-      const { error } = await supabase.from('events').insert([
-        {
-          title: eventNote.trim(),
-          event_time: eventTimeIso,
-          category: normalizedCategory(eventCategory) || 'personal',
-        },
-      ])
+      const response = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          date: eventDate,
+          time: eventTime,
+          note: eventNote.trim(),
+          category: normalizedCategory(eventCategory),
+          customer_name: normalizedTitle,
+        }),
+      })
 
-      if (error) {
-        setSaveEventError(error.message)
+      const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!response.ok) {
+        const message = typeof payload?.error === 'string' ? payload.error : 'Could not create event.'
+        setSaveEventError(message)
         return
       }
 
       await fetchEvents().then(setAppointments)
-
+      setEventTitle('')
       setEventNote('')
-      setEventCategory('Personal')
+      setEventCategory('Business')
       setShowEventModal(false)
     } catch (saveError) {
       setSaveEventError(saveError instanceof Error ? saveError.message : 'Could not create event.')
@@ -309,15 +335,18 @@ export function ClusterDashboard() {
 
   async function handleDeleteEvent(eventToDelete: Appointment) {
     const eventId = String(eventToDelete.id)
-
-    setError(null)
     setDeletingEventId(eventId)
 
     try {
-      const { error } = await supabase.from('events').delete().eq('id', eventId)
+      const response = await fetch(`/api/appointments/${encodeURIComponent(eventId)}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      })
 
-      if (error) {
-        throw error
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+        const message = typeof payload?.error === 'string' ? payload.error : 'Could not delete event.'
+        throw new Error(message)
       }
 
       await fetchEvents().then(setAppointments)
@@ -328,47 +357,173 @@ export function ClusterDashboard() {
     }
   }
 
-  return (
-    <div className="cluster-dashboard-root">
-      <aside className="cluster-dashboard-sidebar">
-        <div>
-          <h2>Upcoming Events</h2>
-          <p className="cluster-sidebar-subtitle">Next scheduled items on your calendar</p>
-        </div>
+  async function handleResetEvents() {
+    if (!window.confirm('Reset all calendar events? This cannot be undone.')) {
+      return
+    }
 
-        <div className="cluster-memory-list">
-          {loading && <p className="cluster-empty">Loading upcoming events...</p>}
-          {!loading && upcomingEvents.length === 0 && (
-            <p className="cluster-empty">No upcoming events yet.</p>
-          )}
-          {upcomingEvents.map((event) => (
-            <article key={event.id} className="cluster-memory-item">
-              <div className="cluster-memory-item-header">
-                <div>
-                  <div className="cluster-memory-name-row">
-                    <p className="cluster-memory-name">{event.note || 'Event'}</p>
-                    {event.category ? <span className={categoryBadgeClassName(event.category)}>{event.category}</span> : null}
-                  </div>
-                  <p className="cluster-memory-text">
-                    {new Date(event.start_time).toLocaleDateString(undefined, {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                    })}{' '}
-                    at {fmtTime(event.start_time)}
-                  </p>
-                  {event.end_time ? (
-                    <time className="cluster-memory-time" dateTime={event.end_time}>
-                      Ends at {fmtTime(event.end_time)}
-                    </time>
-                  ) : null}
+    setError(null)
+    setResettingEvents(true)
+
+    try {
+      const response = await fetch('/api/appointments', {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      })
+
+      const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!response.ok) {
+        const message = typeof payload?.error === 'string' ? payload.error : 'Could not reset calendar events.'
+        throw new Error(message)
+      }
+
+      setAppointments([])
+      setShowEventModal(false)
+      setHoveredTimePreview(null)
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Could not reset calendar events.')
+    } finally {
+      setResettingEvents(false)
+    }
+  }
+
+  function setPopupAnchor(pointerX: number, pointerY: number) {
+    const drawerWidth = 360
+    const drawerHeight = 460
+    const margin = 12
+    const preferredX = pointerX + 22
+    const preferredY = pointerY - Math.round(drawerHeight * 0.45)
+
+    const maxX = window.innerWidth - drawerWidth - margin
+    const maxY = window.innerHeight - drawerHeight - margin
+
+    setDrawerAnchor({
+      x: Math.min(Math.max(margin, preferredX), Math.max(margin, maxX)),
+      y: Math.min(Math.max(margin, preferredY), Math.max(margin, maxY)),
+    })
+  }
+
+  function minuteFromPointerInSlot(pointerEvent: React.MouseEvent<HTMLElement>) {
+    const target = pointerEvent.currentTarget as HTMLElement
+    const rect = target.getBoundingClientRect()
+    const clickOffsetY = pointerEvent.clientY - rect.top
+    const ratio = rect.height > 0 ? clickOffsetY / rect.height : 0
+    return Math.max(0, Math.min(59, Math.round(ratio * 59)))
+  }
+
+  function openAddEventAtHour(hour: number, clickEvent: React.MouseEvent<HTMLElement>) {
+    setPopupAnchor(clickEvent.clientX, clickEvent.clientY)
+    const minute = minuteFromPointerInSlot(clickEvent)
+
+    setEventDate(toDateInputValue(selectedDate))
+    setEventTime(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
+    setEventTitle('')
+    setEventNote('')
+    setEventCategory('Business')
+    setSaveEventError(null)
+    setShowEventModal(true)
+  }
+
+  return (
+    <div className="cluster-day-calendar-root">
+      <header className="cluster-day-calendar-header">
+        <div>
+          <p className="cluster-main-kicker">Calendar</p>
+          <p className="cluster-sidebar-subtitle">click to add reminder or calendar</p>
+          <h1>{viewMode === 'month' ? 'Select a Date' : fmtDate(selectedDate)}</h1>
+        </div>
+        <div className="cluster-day-calendar-controls">
+          {viewMode === 'day' ? (
+            <button type="button" className="cluster-day-back-button" onClick={() => setViewMode('month')}>
+              Back to Month
+            </button>
+          ) : null}
+          <button type="button" className="cluster-calendar-reset-button" onClick={handleResetEvents} disabled={resettingEvents}>
+            {resettingEvents ? 'Resetting...' : 'Reset Events'}
+          </button>
+        </div>
+      </header>
+
+      {error ? <p className="cluster-error">{error}</p> : null}
+
+      {viewMode === 'month' ? (
+        <section className="cluster-month-shell">
+          <Calendar
+            value={selectedDate}
+            onChange={(value) => {
+              if (value instanceof Date) {
+                setSelectedDate(value)
+                setViewMode('day')
+              }
+            }}
+            onClickDay={(value) => {
+              setSelectedDate(value)
+              setViewMode('day')
+            }}
+            tileClassName={calendarTileClass}
+            tileContent={calendarTileContent}
+            className="cluster-calendar"
+          />
+          <p className="cluster-sidebar-subtitle">Pick a date to open the hourly chart.</p>
+        </section>
+      ) : (
+        <section className="cluster-day-shell">
+          {loading ? <p className="cluster-empty">Loading day schedule...</p> : null}
+
+          {!loading ? (
+            <div className="cluster-hour-grid" aria-label="Hourly planner">
+              {HOURS.map((hour) => {
+                const slotEvents = eventsByHour.get(hour) ?? []
+                return (
+                  <button
+                    key={hour}
+                    type="button"
+                    className="cluster-hour-slot"
+                    onClick={(e) => openAddEventAtHour(hour, e)}
+                    onMouseMove={(e) => {
+                      setHoveredTimePreview({ hour, minute: minuteFromPointerInSlot(e) })
+                    }}
+                    onMouseLeave={() => setHoveredTimePreview(null)}
+                  >
+                    <span className="cluster-hour-label">{hourLabel(hour)}</span>
+                    <div className="cluster-hour-content">
+                      {slotEvents.length === 0 ? (
+                        <p className="cluster-hour-empty" />
+                      ) : (
+                        slotEvents.map((event) => (
+                          <span key={event.id} className="cluster-hour-event-pill">
+                            {event.customer_name || 'Event'}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
+          <section className="cluster-day-schedule">
+            <h3>Events on {fmtDate(selectedDate)}</h3>
+            {!loading && selectedDateAppointments.length === 0 ? (
+              <p className="cluster-empty">No events yet. Click an hour to create one.</p>
+            ) : null}
+            {selectedDateAppointments.map((event) => (
+              <div key={event.id} className="cluster-appointment-item">
+                <div className="cluster-appointment-time">
+                  <strong>{fmtTime(event.start_time)}</strong>
+                </div>
+                <div className="cluster-appointment-meta">
+                  {event.customer_name ? <span>{event.customer_name}</span> : null}
+                  {event.category ? <span className={categoryBadgeClassName(event.category)}>{event.category}</span> : null}
+                  {event.note ? <span>{event.note}</span> : null}
                 </div>
                 <button
                   type="button"
                   className="cluster-event-delete-button"
                   onClick={() => handleDeleteEvent(event)}
                   disabled={deletingEventId === String(event.id)}
-                  aria-label={`Delete ${event.note || 'event'}`}
+                  aria-label={`Delete ${event.customer_name || 'calendar event'}`}
                   title="Delete event"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -376,82 +531,28 @@ export function ClusterDashboard() {
                   </svg>
                 </button>
               </div>
-            </article>
-          ))}
-        </div>
-      </aside>
-
-      <main className="cluster-dashboard-main">
-        <header className="cluster-main-header">
-          <div>
-            <h1>Cluster Dashboard</h1>
-            <p>Calendar view with booked dates from /api/appointments</p>
-          </div>
-          {error && <p className="cluster-error">{error}</p>}
-        </header>
-
-        <section className={`cluster-calendar-wrap ${showEventModal ? 'cluster-calendar-wrap-with-drawer' : ''}`}>
-          <div className="cluster-calendar-panel">
-            <Calendar
-              value={selectedDate}
-              onChange={(value) => {
-                if (value instanceof Date) {
-                  setSelectedDate(value)
-                }
-              }}
-              onClickDay={(value) => {
-                setSelectedDate(value)
-                setEventDate(toDateInputValue(value))
-                setEventTime('09:00')
-                setEventCategory('Personal')
-                setSaveEventError(null)
-                setShowEventModal(true)
-              }}
-              tileClassName={calendarTileClass}
-              tileContent={calendarTileContent}
-              className="cluster-calendar"
-            />
-            <p className="cluster-sidebar-subtitle">Click a date to add an event.</p>
-          </div>
-
-          <EventDrawer
-            open={showEventModal}
-            dateLabel={fmtDate(new Date(`${eventDate}T00:00`))}
-            eventNote={eventNote}
-            eventTime={eventTime}
-            eventCategory={eventCategory}
-            saveEventError={saveEventError}
-            savingEvent={savingEvent}
-            onClose={() => setShowEventModal(false)}
-            onSubmit={handleAddEvent}
-            onEventNoteChange={setEventNote}
-            onEventTimeChange={setEventTime}
-            onEventCategoryChange={setEventCategory}
-          />
+            ))}
+          </section>
         </section>
+      )}
 
-        <section className="cluster-day-schedule">
-          <h3>Appointments on {fmtDate(selectedDate)}</h3>
-          {loading && <p className="cluster-empty">Loading schedule...</p>}
-          {!loading && selectedDateAppointments.length === 0 && (
-            <p className="cluster-empty">No booked appointments for this date.</p>
-          )}
-          {selectedDateAppointments.map((appt) => (
-            <div key={appt.id} className="cluster-appointment-item">
-              <div>
-                <strong>{fmtTime(appt.start_time)}</strong>
-                {appt.end_time ? <span> - {fmtTime(appt.end_time)}</span> : null}
-              </div>
-              <div className="cluster-appointment-meta">
-                <span>Status: {appt.status || 'scheduled'}</span>
-                {appt.category ? <span>Category: {appt.category}</span> : null}
-                {appt.customer_name ? <span>Customer: {appt.customer_name}</span> : null}
-                {appt.note ? <span>Event: {appt.note}</span> : null}
-              </div>
-            </div>
-          ))}
-        </section>
-      </main>
+      <EventDrawer
+        open={showEventModal}
+        anchor={drawerAnchor}
+        dateLabel={fmtDate(new Date(`${eventDate}T00:00`))}
+        eventTitle={eventTitle}
+        eventNote={eventNote}
+        eventTime={eventTime}
+        eventCategory={eventCategory}
+        saveEventError={saveEventError}
+        savingEvent={savingEvent}
+        onClose={() => setShowEventModal(false)}
+        onSubmit={handleAddEvent}
+        onEventTitleChange={setEventTitle}
+        onEventNoteChange={setEventNote}
+        onEventTimeChange={setEventTime}
+        onEventCategoryChange={setEventCategory}
+      />
     </div>
   )
 }

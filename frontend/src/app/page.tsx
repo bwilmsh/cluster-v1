@@ -16,10 +16,10 @@ const AGENT_COLORS = [
 ]
 
 const CHIPS = [
-  'Summarise a document',
-  'Draft an email',
-  'Help me plan a campaign',
-  '@mention an agent',
+  'Plan my day around appointments',
+  'Remind me what needs paying this week',
+  'Set up a healthy evening routine',
+  'Help me rebalance my schedule',
 ]
 
 function getColor(index: number): string {
@@ -130,7 +130,8 @@ export default function HomePage() {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '0 24px',
-        backgroundColor: 'var(--bg-primary)',
+        background:
+          'radial-gradient(circle at 12% 8%, rgba(127, 222, 200, 0.18), transparent 34%), radial-gradient(circle at 90% 16%, rgba(255, 188, 119, 0.14), transparent 35%), var(--bg-primary)',
         opacity: isTransitioning ? 0.72 : 1,
         transform: isTransitioning ? 'translateY(3px)' : 'translateY(0)',
         filter: isTransitioning ? 'blur(0.8px)' : 'none',
@@ -142,17 +143,17 @@ export default function HomePage() {
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
         <h1
           style={{
-            fontSize: '26px',
+            fontSize: '28px',
             fontWeight: 600,
             color: 'var(--text-primary)',
             letterSpacing: '-0.02em',
             margin: '0 0 8px',
           }}
         >
-          What can I help with?
+          Life runs smoother with Cluster
         </h1>
         <p style={{ fontSize: '14px', color: 'var(--text-tertiary)', margin: 0 }}>
-          Chat with an agent or @mention one to get started
+          Capture anything on your mind and let Cluster turn it into a clear plan.
         </p>
       </div>
 
@@ -219,10 +220,12 @@ export default function HomePage() {
         {/* Main input box */}
         <div
           style={{
-            backgroundColor: 'var(--bg-tertiary)',
+            background:
+              'linear-gradient(165deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03))',
             border: '0.5px solid var(--border)',
-            borderRadius: '14px',
-            padding: '14px 16px',
+            borderRadius: '18px',
+            boxShadow: '0 14px 28px rgba(0, 0, 0, 0.14)',
+            padding: '15px 16px',
           }}
         >
           <textarea
@@ -230,7 +233,7 @@ export default function HomePage() {
             value={message}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="Message or @mention an agent..."
+            placeholder="What do you want to stay on top of today?"
             rows={3}
             style={{
               width: '100%',

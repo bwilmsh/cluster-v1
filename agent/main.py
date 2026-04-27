@@ -1,23 +1,24 @@
 import os
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Literal
 
 import anthropic
+import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from prompts import (
     build_system_prompt,
+    build_cluster_system_prompt,
     build_group_system_prompt,
     QUESTION_GENERATION_PROMPT,
     GROUP_RELEVANCE_PROMPT,
     INITIAL_MEMORY_PROMPT,
     MEMORY_UPDATE_PROMPT,
-    CLUSTER_SYSTEM_PROMPT,
-    CLUSTER_WORKSPACE_TEMPLATE,
 )
 from tools import get_available_tools, execute_tool
 
@@ -95,7 +96,7 @@ def _manager_route(
         pass
 
     text = message.lower()
-    if any(k in text for k in ["book", "schedule", "appointment", "reschedule", "cancel", "remind", "reminder"]):
+    if any(k in text for k in ["book", "schedule", "appointment", "reschedule", "cancel", "remind", "reminder", "calendar", "build my day", "plan my day", "productivity"]):
         return "booking"
     if any(k in text for k in ["customer", "preference", "memory", "likes", "dislikes", "profile"]):
         return "customer"
@@ -214,6 +215,7 @@ class ClusterChatRequest(BaseModel):
     message: str
     history: list[HistoryMessage] = []
     workspace_context: str = ""
+    integrations: dict[str, Any] = {}
 
 
 class PreflightRequest(BaseModel):
@@ -233,9 +235,72 @@ class AutomateRequest(BaseModel):
     resume_state: dict | None = None  # set when resuming after a human answer
 
 
+class PrismaticAuthRequest(BaseModel):
+    user_id: str | None = None
+    external_customer_id: str | None = None
+
+
+class PrismaticAuthResponse(BaseModel):
+    token: str
+
+
+def _load_prismatic_private_key() -> str:
+    private_key = (os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") or "").strip()
+    if not private_key:
+        raise ValueError("PRISMATIC_PRIVATE_SIGNING_KEY is not set")
+
+    private_key = private_key.strip('"').strip("'")
+    if "\\n" in private_key:
+        private_key = private_key.replace("\\n", "\n")
+
+    return private_key
+
+
+def get_prismatic_jwt(user_id: str, external_customer_id: str) -> str:
+    org_id = (os.environ.get("PRISMATIC_ORG_ID") or "").strip()
+    if not org_id:
+        raise ValueError("PRISMATIC_ORG_ID is not set")
+
+    private_key = _load_prismatic_private_key()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "external_id": str(user_id),
+        "customer": str(external_customer_id),
+        "organization": org_id,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=10)).timestamp()),
+    }
+    return jwt.encode(payload, private_key, algorithm="RS256")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/v1/auth/prismatic", response_model=PrismaticAuthResponse)
+def prismatic_auth(req: PrismaticAuthRequest):
+    try:
+        user_id = (req.user_id or os.environ.get("PRISMATIC_USER_ID") or "").strip()
+        external_customer_id = (
+            req.external_customer_id
+            or os.environ.get("PRISMATIC_EXTERNAL_CUSTOMER_ID")
+            or ""
+        ).strip()
+
+        if not user_id:
+            raise ValueError("PRISMATIC_USER_ID is not set")
+        if not external_customer_id:
+            raise ValueError("PRISMATIC_EXTERNAL_CUSTOMER_ID is not set")
+
+        token = get_prismatic_jwt(user_id, external_customer_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Prismatic auth failed: {str(exc)}") from exc
+
+    return PrismaticAuthResponse(token=token)
 
 
 def run_tool_use_loop(
@@ -297,7 +362,13 @@ async def stream_chat(
 ) -> AsyncIterator[str]:
     client = get_client()
     # Inject agent identity into integrations so browse_website can log activity
-    enriched_integrations = {**integrations, "agent_id": agent_id, "agent_name": agent_name}
+    enriched_integrations = {
+        **integrations,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "user_id": integrations.get("user_id") or os.environ.get("PRISMATIC_USER_ID"),
+        "external_customer_id": integrations.get("external_customer_id") or os.environ.get("PRISMATIC_EXTERNAL_CUSTOMER_ID"),
+    }
     business_context, memory_without_context = _split_business_context(memory)
     route = _manager_route(client, business_context, message, history)
     system_prompt = build_system_prompt(
@@ -745,15 +816,29 @@ async def stream_cluster_chat(
     message: str,
     history: list[HistoryMessage],
     workspace_context: str,
+    integrations: dict[str, Any],
 ) -> AsyncIterator[str]:
     client = get_client()
-    system_prompt = CLUSTER_SYSTEM_PROMPT + CLUSTER_WORKSPACE_TEMPLATE.format(
-        workspace_context=workspace_context
-    )
+    system_prompt = build_cluster_system_prompt(workspace_context)
+    tools = get_available_tools(integrations)
 
     recent = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
     messages: list[dict] = [{"role": m.role, "content": m.content} for m in recent]
     messages.append({"role": "user", "content": message})
+
+    final_content = None
+    if tools:
+        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
+
+    if final_content is not None:
+        emitted_text = False
+        for block in final_content:
+            if hasattr(block, "text"):
+                emitted_text = True
+                yield f"data: {json.dumps({'delta': block.text})}\n\n"
+        if emitted_text:
+            yield "data: [DONE]\n\n"
+            return
 
     with client.messages.stream(
         model=MODEL,
@@ -770,7 +855,7 @@ async def stream_cluster_chat(
 @app.post("/cluster-chat")
 async def cluster_chat(req: ClusterChatRequest):
     return StreamingResponse(
-        stream_cluster_chat(req.message, req.history, req.workspace_context),
+        stream_cluster_chat(req.message, req.history, req.workspace_context, req.integrations),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

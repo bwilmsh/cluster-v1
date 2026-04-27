@@ -146,14 +146,25 @@ You are one member of a working team, not a solo assistant. Rules:
 def _integration_context(integrations: dict) -> str:
     """Build a section telling the agent which integrations are connected and what it can do."""
     available = []
-    if os.environ.get("GMAIL_USER"):
-        available.append("Email (SMTP) — send_email via GMAIL_USER credentials")
-    if integrations.get("slack_token"):
-        available.append("Slack — send_slack_message to any channel")
-    if os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL"):
-        available.append("Microsoft Teams — send_teams_message via Prismatic webhook")
-    if integrations.get("notion_token"):
-        available.append("Notion — create_notion_page in databases")
+
+    connected_integrations = integrations.get("connected_integrations")
+    if isinstance(connected_integrations, list) and connected_integrations:
+        for integration in connected_integrations:
+            if not isinstance(integration, dict):
+                continue
+            label = str(integration.get("label") or integration.get("provider") or "integration")
+            tools = integration.get("tools") or []
+            tool_text = ", ".join(str(tool) for tool in tools) if tools else "connected"
+            available.append(f"{label} — {tool_text}")
+    else:
+        if os.environ.get("GMAIL_USER"):
+            available.append("Email (SMTP) — send_email via GMAIL_USER credentials")
+        if integrations.get("slack_token"):
+            available.append("Slack — send_slack_message to any channel")
+        if os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") and os.environ.get("PRISMATIC_ORG_ID"):
+            available.append("Microsoft Teams — send_teams_message via Prismatic marketplace instance lookup")
+        if integrations.get("notion_token"):
+            available.append("Notion — create_notion_page in databases")
 
     if not available:
         return (
@@ -381,6 +392,18 @@ Personality:
 - No filler. No preamble. No "Great question!" No "Of course!".
 - You give verdicts, not options. If someone asks what to do, tell them.
 
+Calendar and day-planning behavior:
+- When the user mentions a plan, appointment, meeting, errand, or specific time, ask a direct confirmation question before adding it: "Do you want me to add this to your calendar?"
+- Never create a calendar event from conversation context unless the user clearly confirms.
+- If the user says yes, use add_calendar_event with a clean title, precise start_time, and category business|personal|chore.
+- If the user asks "build my day" or "build me a day for productivity", call get_calendar_events first, then produce a time-blocked day plan around existing events.
+- For productivity day plans, use memory only when it is clearly current and relevant to today/this week.
+- If a memory detail is stale, undated, or clearly old, do not mention it in the plan.
+
+Quick win reinforcement:
+- When the user completes something or reports a win, start with one short quick-win line that celebrates progress and momentum.
+- Keep the quick win concrete and tied to what was completed.
+
 Dashboard widgets:
 When a user asks you to build something for their dashboard, output a widget configuration using this exact format — on a new line, after your response text:
 
@@ -403,6 +426,12 @@ Before each response, think through (internally — never show this):
 
 
 CLUSTER_WORKSPACE_TEMPLATE = """\n\n{workspace_context}"""
+
+
+def build_cluster_system_prompt(workspace_context: str) -> str:
+    return CLUSTER_SYSTEM_PROMPT + _today_context() + CLUSTER_WORKSPACE_TEMPLATE.format(
+        workspace_context=workspace_context
+    )
 
 
 MEMORY_UPDATE_PROMPT = """You maintain the memory file for {agent_name}.

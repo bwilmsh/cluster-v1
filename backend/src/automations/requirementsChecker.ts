@@ -24,6 +24,7 @@ const REQUIREMENT_META: Record<string, { label: string; type: 'credentials' | 'i
   google_oauth:          { label: 'Google account',        type: 'integration',  settingsPath: '/integrations' },
   slack_token:           { label: 'Slack workspace',       type: 'integration',  settingsPath: '/integrations' },
   notion_token:          { label: 'Notion workspace',      type: 'integration',  settingsPath: '/integrations' },
+  teams_token:           { label: 'Microsoft Teams',       type: 'integration',  settingsPath: '/integrations' },
 }
 
 function metaFor(key: string): { label: string; type: 'credentials' | 'integration'; settingsPath: string } {
@@ -43,7 +44,7 @@ function metaFor(key: string): { label: string; type: 'credentials' | 'integrati
 /**
  * Checks whether all items in `requires` are satisfied for the given user.
  * - `*_credentials` keys → must have a WebCredential whose siteName normalises to that key
- * - `google_oauth` / `slack_token` / `notion_token` → must have a connected Integration
+ * - `google_oauth` / `slack_token` / `notion_token` / `teams_token` → must have a connected Integration
  */
 export async function checkRequirements(userId: string, requires: string[]): Promise<RequirementsResult> {
   if (!requires || requires.length === 0) return { ok: true, missing: [] }

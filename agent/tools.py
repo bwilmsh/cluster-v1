@@ -1841,24 +1841,21 @@ def _send_slack_message(inputs: dict, token: str) -> str:
 
 
 def _send_teams_message(inputs: dict) -> str:
-    """Send a message to Microsoft Teams via Prismatic webhook."""
-    from tools.prismatic_handler import trigger_prismatic_flow
+    """Send a message to Microsoft Teams via the user's Prismatic instance."""
+    from prismatic_handler import get_user_integration_url, trigger_prismatic_flow
     
     message_content = inputs.get("message_content", "").strip()
     target_channel = inputs.get("target_channel", "").strip()
+    user_id = str(inputs.get("user_id") or os.environ.get("PRISMATIC_USER_ID") or "").strip()
     
     if not message_content:
         raise Exception("message_content cannot be empty")
     if not target_channel:
         raise Exception("target_channel cannot be empty")
+    if not user_id:
+        raise Exception("user_id cannot be determined for Prismatic instance lookup")
     
-    # Get the webhook URL from environment variable
-    webhook_url = os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL")
-    if not webhook_url:
-        raise Exception(
-            "PRISMATIC_TEAMS_WEBHOOK_URL environment variable not set. "
-            "Set it to your Prismatic Teams webhook URL."
-        )
+    webhook_url = get_user_integration_url(user_id, "Teams")
     
     # Build payload for Teams message
     payload = {
@@ -2221,8 +2218,8 @@ def _register_tool_registry() -> None:
             ),
             (
                 SEND_TEAMS_MESSAGE_TOOL,
-                lambda inputs, env: _send_teams_message(inputs),
-                lambda env: bool(os.environ.get("PRISMATIC_TEAMS_WEBHOOK_URL")),
+                lambda inputs, env: _send_teams_message({**inputs, "user_id": env.get("user_id"), "external_customer_id": env.get("external_customer_id")}),
+                lambda env: bool(os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") and os.environ.get("PRISMATIC_ORG_ID")),
             ),
             (
                 CREATE_NOTION_PAGE_TOOL,

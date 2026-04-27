@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { prisma } from '../db'
-import { getUserIntegrationTokens } from './integrations'
+import { getUserIntegrationContext } from '../lib/integrationContext'
 import { filesRouter } from './files'
 
 export const agentsRouter = Router()
@@ -245,7 +245,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
   })
 
   // Fetch history + agent files + user integrations in parallel
-  const [history, agentFiles, integrationTokens] = await Promise.all([
+  const [history, agentFiles, integrationContext] = await Promise.all([
     prisma.message.findMany({
       where: { agentId: id },
       orderBy: { createdAt: 'asc' },
@@ -255,8 +255,9 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
       where: { agentId: id },
       select: { fileName: true, content: true },
     }),
-    getUserIntegrationTokens(user.id),
+    getUserIntegrationContext(user.id),
   ])
+  const integrationTokens = integrationContext.tokens
 
   const business_context = await getBusinessContext()
   const memoryWithBusinessContext = `${business_context}\n\n${agent.memory ?? ''}`.trim()
@@ -285,6 +286,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
         history: history.slice(0, -1),
         message,
         integrations: integrationTokens,
+        connected_integrations: integrationContext.connectedIntegrations,
         files: agentFiles.map((f) => ({ name: f.fileName, content: f.content })),
       }),
     })
