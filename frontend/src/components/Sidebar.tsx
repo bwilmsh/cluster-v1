@@ -113,7 +113,6 @@ const NAV_ITEMS = [
   { href: '/workflows', label: 'Workflows', Icon: WorkflowIcon },
   { href: '/scheduler', label: 'Automations', Icon: ClockIcon },
   { href: '/credentials', label: 'Credentials', Icon: KeyIcon },
-  { href: '/integrations', label: 'Integrations', Icon: PlugIcon },
   { href: '/settings', label: 'Settings', Icon: GearIcon },
 ]
 

@@ -20,18 +20,12 @@ const INTEGRATION_LABELS: Record<string, string> = {
   google: 'Gmail / Google Workspace',
   slack: 'Slack',
   notion: 'Notion',
-  teams: 'Microsoft Teams (Prismatic)',
 }
 
 const INTEGRATION_TOOLS: Record<string, string[]> = {
   google: ['Calendar', 'Gmail', 'Sheets'],
   slack: ['send_slack_message'],
   notion: ['create_notion_page'],
-  teams: ['send_teams_message'],
-}
-
-function isPrismaticTeamsAvailable(): boolean {
-  return Boolean(process.env.PRISMATIC_PRIVATE_SIGNING_KEY && process.env.PRISMATIC_ORG_ID)
 }
 
 function buildConnectedIntegration(provider: string): ConnectedIntegration {
@@ -54,10 +48,6 @@ async function buildConnectedIntegrations(userId: string): Promise<ConnectedInte
     accountName: integration.accountName,
     expiresAt: integration.expiresAt,
   }))
-
-  if (isPrismaticTeamsAvailable() && !connected.some((integration) => integration.provider === 'teams')) {
-    connected.push(buildConnectedIntegration('teams'))
-  }
 
   return connected
 }

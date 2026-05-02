@@ -74,6 +74,21 @@ export default function DashboardPage() {
   const [sectionVisibility, setSectionVisibility] = useState<SectionVisibility>(DEFAULT_SECTION_VISIBILITY)
   const addMenuRef = useRef<HTMLDivElement | null>(null)
 
+  async function loadUpcomingEvents() {
+    try {
+      const response = await fetch('/api/appointments?upcoming=true&limit=10')
+      const appointments = await response.json().catch(() => [])
+      const appointmentList = Array.isArray(appointments) ? appointments : []
+      return appointmentList.map((apt: any) => ({
+        title: apt.customer_name || 'Appointment',
+        start_time: apt.start_time,
+        category: apt.category || 'personal',
+      })).slice(0, 3)
+    } catch {
+      return []
+    }
+  }
+
   const handleThemeToggle = () => {
     const htmlElement = document.documentElement
     const currentTheme = htmlElement.classList.contains('light-mode') ? 'light' : 'dark'
@@ -146,7 +161,7 @@ export default function DashboardPage() {
       api.agents.list(),
       api.automations.list().catch(() => ({ automations: [], runsToday: 0, dailyLimit: 10 })),
       api.groupChats.list().catch(() => []),
-      fetch('/api/appointments?upcoming=true&limit=10').then(r => r.json()).catch(() => []),
+      loadUpcomingEvents(),
     ])
       .then(([a, auto, chats, appointments]) => {
         const agentList = Array.isArray(a) ? a : (a as { agents?: Agent[]; data?: Agent[] })?.agents ?? (a as { agents?: Agent[]; data?: Agent[] })?.data ?? []
@@ -162,6 +177,35 @@ export default function DashboardPage() {
         setUpcomingEvents(events)
       })
       .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function refreshUpcoming() {
+      const events = await loadUpcomingEvents()
+      if (!cancelled) {
+        setUpcomingEvents(events)
+      }
+    }
+
+    const intervalId = window.setInterval(refreshUpcoming, 60_000)
+    const handleFocus = () => refreshUpcoming()
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshUpcoming()
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
   function hideSection(sectionId: DashboardSectionId) {

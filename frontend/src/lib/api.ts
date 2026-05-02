@@ -5,7 +5,7 @@ export function safeArray<T>(data: unknown): T[] {
   if (Array.isArray(data)) return data as T[]
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>
-    for (const key of ['data', 'items', 'results', 'tasks', 'agents', 'widgets', 'messages', 'credentials', 'chats', 'members', 'activities']) {
+    for (const key of ['data', 'items', 'results', 'tasks', 'agents', 'widgets', 'messages', 'credentials', 'chats', 'members', 'activities', 'goals']) {
       if (Array.isArray(d[key])) return d[key] as T[]
     }
   }
@@ -73,6 +73,16 @@ export interface Widget {
   order: number
   lastUpdated: string | null
   createdAt: string
+}
+
+export interface Goal {
+  id: number
+  user_id: number | null
+  goal_text: string | null
+  is_active: boolean
+  visible_agent_ids: string[]
+  created_at: string | null
+  updated_at: string | null
 }
 
 export const api = {
@@ -244,6 +254,49 @@ export const api = {
   browse: {
     activity: (): Promise<BrowseActivity[]> =>
       fetch(`${BASE}/browse/activity`).then((r) => r.json()).then((d) => safeArray<BrowseActivity>(d)),
+  },
+
+  goals: {
+    list: (limit = 10): Promise<Goal[]> =>
+      fetch(`${BASE}/goals?limit=${encodeURIComponent(String(limit))}`)
+        .then((r) => r.json())
+        .then((d) => safeArray<Goal>(d)),
+
+    current: (): Promise<Goal | null> =>
+      fetch(`${BASE}/goals/current`)
+        .then((r) => {
+          if (!r.ok) return r.json().then((d) => Promise.reject(new Error(typeof d?.details === 'string' ? d.details : d?.error ?? 'Failed to load current goal')))
+          return r.json()
+        })
+        .then((d) => {
+          if (d && typeof d === 'object' && 'data' in d) {
+            const data = (d as { data?: Goal | null }).data
+            return data ?? null
+          }
+          return null
+        }),
+
+    setCurrent: (goalText: string, visibleAgentIds: string[] = [], userId?: number): Promise<{ success: boolean; created: Goal }> =>
+      fetch(`${BASE}/goals/current`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal_text: goalText, visible_agent_ids: visibleAgentIds, user_id: userId ?? null }),
+      }).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to create goal')
+        }
+        return data
+      }),
+
+    clearCurrent: (): Promise<{ success: boolean; cleared: number }> =>
+      fetch(`${BASE}/goals/current`, { method: 'DELETE' }).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to clear goal')
+        }
+        return data
+      }),
   },
 
   ap: {

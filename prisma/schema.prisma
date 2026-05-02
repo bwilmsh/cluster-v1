@@ -18,6 +18,7 @@ model User {
   integrations    Integration[]
   oauthConfigs    OAuthConfig[]
   widgets         Widget[]
+  goals           Goal[]
   webCredentials  WebCredential[]
   automations      Automation[]
   browseActivities BrowseActivity[]
@@ -229,4 +230,15 @@ model WorkflowRun {
   completedAt DateTime?
   status      String    // "running" | "success" | "failed"
   result      String?
+}
+
+model Goal {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalText        String
+  isActive        Boolean  @default(true)
+  visibleAgentIds Json     @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

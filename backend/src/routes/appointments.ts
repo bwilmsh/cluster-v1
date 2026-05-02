@@ -1,4 +1,12 @@
 import { Router, Request, Response } from 'express'
+import { getDefaultUser } from '../db'
+import { getUserIntegrationContext } from '../lib/integrationContext'
+import {
+  createGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
+  listGoogleCalendarEvents,
+  updateGoogleCalendarEvent,
+} from '../lib/googleCalendar'
 
 export const appointmentsRouter = Router()
 
@@ -47,6 +55,15 @@ type CreateAppointmentBody = {
   start_time?: string
   end_time?: string
   duration_minutes?: number
+}
+
+type UpdateAppointmentBody = {
+  customer_name?: string
+  title?: string
+  note?: string
+  category?: string
+  start_time?: string
+  end_time?: string
 }
 
 type ParseTaskBody = {
@@ -1188,17 +1205,28 @@ async function insertLegacyEvent(
 }
 
 appointmentsRouter.get('/', async (req: Request, res: Response) => {
-  const { supabaseUrl, supabaseKey } = getSupabaseConfig()
-  if (!supabaseUrl || !supabaseKey) {
-    return res.json({
-      data: [],
-      warning: 'Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) in .env.',
-    })
-  }
-
   try {
+    const user = await getDefaultUser()
     const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), 500)
     const nowOnly = String(req.query.upcoming ?? 'false') === 'true'
+
+    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
+    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+
+    if (hasGoogleCalendar) {
+      const googleResult = await listGoogleCalendarEvents(user.id, { limit, upcoming: nowOnly })
+      if (googleResult.ok) {
+        return res.json(googleResult.data)
+      }
+    }
+
+    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+    if (!supabaseUrl || !supabaseKey) {
+      return res.json({
+        data: [],
+        warning: 'Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) in .env.',
+      })
+    }
 
     const query = new URLSearchParams({
       select: 'id,customer_id,start_time,end_time,status,customers(name,email,notes)',
@@ -1317,20 +1345,41 @@ appointmentsRouter.delete('/', async (_req: Request, res: Response) => {
 })
 
 appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
-  const { supabaseUrl, supabaseKey } = getSupabaseConfig()
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(503).json({
-      error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
-    })
-  }
-
   try {
-    const appointmentId = Number(req.params.id)
-    if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+    const user = await getDefaultUser()
+    const appointmentId = String(req.params.id ?? '').trim()
+    if (!appointmentId) {
+      return res.status(400).json({ error: 'appointment id is required' })
+    }
+
+    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
+    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+
+    if (hasGoogleCalendar) {
+      const googleDelete = await deleteGoogleCalendarEvent(user.id, appointmentId)
+      if (googleDelete.ok) {
+        return res.json({ success: true, deleted: true, id: appointmentId, source: 'google' })
+      }
+
+      return res.status(googleDelete.status).json({
+        error: 'Failed to delete calendar event from Google Calendar',
+        details: googleDelete.details,
+      })
+    }
+
+    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(503).json({
+        error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
+      })
+    }
+
+    const numericId = Number(appointmentId)
+    if (!Number.isInteger(numericId) || numericId <= 0) {
       return res.status(400).json({ error: 'appointment id must be a positive integer' })
     }
 
-    const appointmentResponse = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${appointmentId}`, {
+    const appointmentResponse = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${numericId}`, {
       method: 'DELETE',
       headers: supabaseHeaders(supabaseKey),
     })
@@ -1338,7 +1387,7 @@ appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
     if (!appointmentResponse.ok) {
       const details = await appointmentResponse.text()
       if (isMissingSupabaseTable(details, 'appointments')) {
-        const legacyResponse = await fetch(`${supabaseUrl}/rest/v1/events?id=eq.${appointmentId}`, {
+        const legacyResponse = await fetch(`${supabaseUrl}/rest/v1/events?id=eq.${numericId}`, {
           method: 'DELETE',
           headers: supabaseHeaders(supabaseKey),
         })
@@ -1351,7 +1400,7 @@ appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
           })
         }
 
-        return res.json({ success: true, deleted: true, id: appointmentId })
+        return res.json({ success: true, deleted: true, id: numericId })
       }
 
       return res.status(appointmentResponse.status).json({
@@ -1360,7 +1409,7 @@ appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
       })
     }
 
-    return res.json({ success: true, deleted: true, id: appointmentId })
+    return res.json({ success: true, deleted: true, id: numericId })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unknown error'
     return res.status(500).json({ error: 'Internal server error', details })
@@ -1368,14 +1417,8 @@ appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
 })
 
 appointmentsRouter.post('/', async (req: Request, res: Response) => {
-  const { supabaseUrl, supabaseKey } = getSupabaseConfig()
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(503).json({
-      error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
-    })
-  }
-
   try {
+    const user = await getDefaultUser()
     const body = req.body as CreateAppointmentBody
     const parsedFromStart = parseIsoOrNull(String(body.start_time ?? '').trim())
     const parsedFromDateTime = parseDateAndTimeOrNull(body.date, body.time)
@@ -1397,6 +1440,42 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
     const eventTitle = String(body.customer_name ?? body.title ?? '').trim()
     const note = String(body.note ?? '').trim()
     const category = String(body.category ?? '').trim()
+    const endTime = formatIsoDate(endDate)
+    const startTime = formatIsoDate(startDate)
+
+    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
+    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+
+    if (hasGoogleCalendar) {
+      const googleCreate = await createGoogleCalendarEvent(user.id, {
+        title: eventTitle || 'Event',
+        note,
+        category,
+        startTime,
+        endTime,
+      })
+
+      if (googleCreate.ok) {
+        return res.status(201).json({
+          success: true,
+          source: 'google',
+          appointment: googleCreate.appointment,
+        })
+      }
+
+      return res.status(googleCreate.status).json({
+        error: 'Failed to create event in Google Calendar',
+        details: googleCreate.details,
+      })
+    }
+
+    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(503).json({
+        error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
+      })
+    }
+
     const identity = createPersonalEventIdentity(eventTitle)
 
     const legacyCreate = await insertLegacyEvent(supabaseUrl, supabaseKey, eventTitle, note, category, startDate)
@@ -1474,6 +1553,63 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
         end_time: appointment.end_time,
         status: appointment.status,
       },
+    })
+  } catch (error) {
+    const details = error instanceof Error ? error.message : 'Unknown error'
+    return res.status(500).json({ error: 'Internal server error', details })
+  }
+})
+
+appointmentsRouter.patch('/:id', async (req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const eventId = String(req.params.id ?? '').trim()
+    if (!eventId) {
+      return res.status(400).json({ error: 'appointment id is required' })
+    }
+
+    const body = req.body as UpdateAppointmentBody
+    const title = String(body.customer_name ?? body.title ?? '').trim()
+    const note = String(body.note ?? '').trim()
+    const category = String(body.category ?? '').trim()
+    const startTime = String(body.start_time ?? '').trim()
+    const endTime = String(body.end_time ?? '').trim()
+
+    const hasUpdate = Boolean(title || note || category || startTime || endTime)
+    if (!hasUpdate) {
+      return res.status(400).json({ error: 'Provide at least one field to update' })
+    }
+
+    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
+    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+
+    if (!hasGoogleCalendar) {
+      return res.status(501).json({
+        error: 'Calendar edits require a connected Google account',
+        details: 'Connect Google Calendar to enable direct event updates.',
+      })
+    }
+
+    const googleUpdate = await updateGoogleCalendarEvent(user.id, eventId, {
+      title: title || undefined,
+      note: note || undefined,
+      category: category || undefined,
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+    })
+
+    if (!googleUpdate.ok) {
+      return res.status(googleUpdate.status).json({
+        error: 'Failed to update event in Google Calendar',
+        details: googleUpdate.details,
+      })
+    }
+
+    return res.json({
+      success: true,
+      updated: true,
+      source: 'google',
+      appointment: googleUpdate.appointment,
     })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unknown error'

@@ -23,7 +23,7 @@ function backendUrl() {
 
 oauthRouter.get('/google/start', async (_req: Request, res: Response) => {
   const creds = await getOAuthCredentials('google')
-  if (!creds) return res.redirect(`${frontendUrl()}/integrations?error=google_not_configured`)
+  if (!creds) return res.redirect(`${frontendUrl()}/calendar?error=google_not_configured`)
 
   const redirectUri = `${backendUrl()}/api/oauth/google/callback`
   const params = new URLSearchParams({
@@ -46,11 +46,11 @@ oauthRouter.get('/google/start', async (_req: Request, res: Response) => {
 
 oauthRouter.get('/google/callback', async (req: Request, res: Response) => {
   const { code, error } = req.query
-  if (error || !code) return res.redirect(`${frontendUrl()}/integrations?error=google`)
+  if (error || !code) return res.redirect(`${frontendUrl()}/calendar?error=google`)
 
   try {
     const creds = await getOAuthCredentials('google')
-    if (!creds) return res.redirect(`${frontendUrl()}/integrations?error=google_not_configured`)
+    if (!creds) return res.redirect(`${frontendUrl()}/calendar?error=google_not_configured`)
 
     const redirectUri = `${backendUrl()}/api/oauth/google/callback`
 
@@ -95,10 +95,27 @@ oauthRouter.get('/google/callback', async (req: Request, res: Response) => {
       },
     })
 
-    res.redirect(`${frontendUrl()}/integrations?connected=google`)
+    res.redirect(`${frontendUrl()}/calendar?connected=google`)
   } catch (err) {
     console.error('Google OAuth callback error:', err)
-    res.redirect(`${frontendUrl()}/integrations?error=google`)
+    res.redirect(`${frontendUrl()}/calendar?error=google`)
+  }
+})
+
+oauthRouter.get('/google/status', async (_req: Request, res: Response) => {
+  try {
+    const user = await getDefaultUser()
+    const integration = await prisma.integration.findUnique({
+      where: { userId_provider: { userId: user.id, provider: 'google' } },
+      select: { provider: true, accountEmail: true, accountName: true, expiresAt: true },
+    })
+
+    res.json({
+      connected: Boolean(integration),
+      integration: integration ?? null,
+    })
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 

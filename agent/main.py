@@ -235,72 +235,9 @@ class AutomateRequest(BaseModel):
     resume_state: dict | None = None  # set when resuming after a human answer
 
 
-class PrismaticAuthRequest(BaseModel):
-    user_id: str | None = None
-    external_customer_id: str | None = None
-
-
-class PrismaticAuthResponse(BaseModel):
-    token: str
-
-
-def _load_prismatic_private_key() -> str:
-    private_key = (os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") or "").strip()
-    if not private_key:
-        raise ValueError("PRISMATIC_PRIVATE_SIGNING_KEY is not set")
-
-    private_key = private_key.strip('"').strip("'")
-    if "\\n" in private_key:
-        private_key = private_key.replace("\\n", "\n")
-
-    return private_key
-
-
-def get_prismatic_jwt(user_id: str, external_customer_id: str) -> str:
-    org_id = (os.environ.get("PRISMATIC_ORG_ID") or "").strip()
-    if not org_id:
-        raise ValueError("PRISMATIC_ORG_ID is not set")
-
-    private_key = _load_prismatic_private_key()
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(user_id),
-        "external_id": str(user_id),
-        "customer": str(external_customer_id),
-        "organization": org_id,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=10)).timestamp()),
-    }
-    return jwt.encode(payload, private_key, algorithm="RS256")
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-@app.post("/api/v1/auth/prismatic", response_model=PrismaticAuthResponse)
-def prismatic_auth(req: PrismaticAuthRequest):
-    try:
-        user_id = (req.user_id or os.environ.get("PRISMATIC_USER_ID") or "").strip()
-        external_customer_id = (
-            req.external_customer_id
-            or os.environ.get("PRISMATIC_EXTERNAL_CUSTOMER_ID")
-            or ""
-        ).strip()
-
-        if not user_id:
-            raise ValueError("PRISMATIC_USER_ID is not set")
-        if not external_customer_id:
-            raise ValueError("PRISMATIC_EXTERNAL_CUSTOMER_ID is not set")
-
-        token = get_prismatic_jwt(user_id, external_customer_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Prismatic auth failed: {str(exc)}") from exc
-
-    return PrismaticAuthResponse(token=token)
 
 
 def run_tool_use_loop(

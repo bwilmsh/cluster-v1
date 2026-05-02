@@ -22,6 +22,7 @@ interface Props {
   uploading?: boolean
   automationMode?: boolean
   onAutomationModeChange?: (active: boolean) => void
+  helperText?: string
 }
 
 const AGENT_COLORS = [
@@ -288,6 +289,7 @@ export function ChatWindow({
   uploading,
   automationMode,
   onAutomationModeChange,
+  helperText,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -326,6 +328,7 @@ export function ChatWindow({
 
       {/* Input bar */}
       <div className="shrink-0 border-t border-surface-border px-4 py-3">
+        {helperText ? <p className="mb-2 text-[11px] text-white/35">{helperText}</p> : null}
         {automationMode && (
           <div className="flex items-center gap-2 mb-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/15 border border-violet-500/25 text-violet-300 text-xs font-medium">

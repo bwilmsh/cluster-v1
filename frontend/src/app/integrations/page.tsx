@@ -1,5 +1,5 @@
-import ClusterHub from '@/components/ClusterHub'
+import { redirect } from 'next/navigation'
 
 export default function IntegrationsPage() {
-  return <ClusterHub />
+  redirect('/scheduler')
 }

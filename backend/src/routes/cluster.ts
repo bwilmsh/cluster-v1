@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { prisma } from '../db'
+import { getAllGoalsSummary } from '../lib/goals'
 
 export const clusterRouter = Router()
 
@@ -22,6 +23,7 @@ async function buildWorkspaceContext(userId: string): Promise<string> {
       orderBy: { order: 'asc' },
     }),
   ])
+  const goals = await getAllGoalsSummary(userId, agents.map((agent) => ({ id: agent.id, name: agent.name })))
 
   let ctx = 'WORKSPACE OVERVIEW\n\n'
 
@@ -40,6 +42,16 @@ async function buildWorkspaceContext(userId: string): Promise<string> {
   ctx += `\nDashboard Widgets (${widgets.length}):\n`
   for (const w of widgets) {
     ctx += `- ${w.title} [${w.type}]\n`
+  }
+
+  ctx += `\nGoals (${goals.length}):\n`
+  if (goals.length === 0) {
+    ctx += `- None yet.\n`
+  } else {
+    for (const goal of goals) {
+      const status = goal.isActive ? 'active' : 'inactive'
+      ctx += `- ${goal.goalText} [${status}] visible to: ${goal.visibleTo}\n`
+    }
   }
 
   return ctx

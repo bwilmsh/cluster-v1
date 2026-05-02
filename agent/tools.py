@@ -338,6 +338,34 @@ READ_AGENT_MEMORY_TOOL = {
     },
 }
 
+SET_GOAL_TOOL = {
+    "name": "set_goal",
+    "description": (
+        "Create an active goal from chat so the agent can plan around it. "
+        "Use this when the user says what they want to achieve. "
+        "After saving it, ask: 'How do you want to achieve this goal?' so the plan can be remembered too."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "goal_text": {
+                "type": "string",
+                "description": "The goal the user wants to achieve",
+            },
+            "how_to_achieve": {
+                "type": "string",
+                "description": "Optional plan or approach the user already gave",
+            },
+            "visible_agent_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of agent IDs that should be able to see this goal",
+            },
+        },
+        "required": ["goal_text"],
+    },
+}
+
 GET_CALENDAR_EVENTS_TOOL = {
     "name": "get_calendar_events",
     "description": (
@@ -561,19 +589,6 @@ SEND_SLACK_MESSAGE_TOOL = {
             "message": {"type": "string", "description": "Message text"},
         },
         "required": ["channel", "message"],
-    },
-}
-
-SEND_TEAMS_MESSAGE_TOOL = {
-    "name": "send_teams_message",
-    "description": "Send a message to a Microsoft Teams channel via Prismatic integration.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "message_content": {"type": "string", "description": "The message text to send"},
-            "target_channel": {"type": "string", "description": "Target Teams channel name or ID"},
-        },
-        "required": ["message_content", "target_channel"],
     },
 }
 
@@ -965,6 +980,80 @@ def _read_agent_memory(inputs: dict) -> str:
         return f"Agent '{returned_name}' has no memory yet."
 
     return f"Memory for {returned_name}:\n{memory[:4000]}"
+
+
+def _set_goal(inputs: dict, integrations: dict) -> str:
+    goal_text = str(inputs.get("goal_text", "")).strip()
+    if not goal_text:
+        return "Goal creation failed: goal_text is required."
+
+    visible_agent_ids = inputs.get("visible_agent_ids")
+    if not isinstance(visible_agent_ids, list):
+        visible_agent_ids = []
+
+    cleaned_agent_ids = [str(agent_id).strip() for agent_id in visible_agent_ids if str(agent_id).strip()]
+    if not cleaned_agent_ids:
+        agent_id = str(integrations.get("agent_id") or "").strip()
+        if agent_id:
+            cleaned_agent_ids = [agent_id]
+
+    payload = {
+        "goal_text": goal_text,
+        "visible_agent_ids": cleaned_agent_ids,
+    }
+
+    try:
+        response = httpx.post(f"{BACKEND_URL}/api/goals/current", json=payload, timeout=15)
+    except Exception as exc:
+        return f"Goal creation failed: network error contacting backend: {exc}"
+
+    if response.status_code >= 400:
+        return f"Goal creation failed: backend returned {response.status_code}: {response.text[:200]}"
+
+    data = response.json()
+    created = data.get("created") or {}
+    created_text = str(created.get("goal_text") or goal_text).strip()
+    plan = str(inputs.get("how_to_achieve") or "").strip()
+
+    agent_name = str(integrations.get("agent_name") or "").strip()
+    agent_id = str(integrations.get("agent_id") or "").strip()
+    if agent_name:
+        try:
+            memory_response = httpx.get(
+                f"{BACKEND_URL}/api/agents/memory/by-name",
+                params={"name": agent_name},
+                timeout=15,
+            )
+            if memory_response.is_success:
+                current_memory = str((memory_response.json() or {}).get("memory") or "").strip()
+                goal_note_lines = [f"Active goal: {created_text}"]
+                if plan:
+                    goal_note_lines.append(f"Goal approach: {plan}")
+                else:
+                    goal_note_lines.append("Goal approach: Ask how do you want to achieve this goal?")
+                goal_note = "\n".join(goal_note_lines)
+                updated_memory = f"{current_memory}\n\n{goal_note}".strip() if current_memory else goal_note
+
+                if agent_id:
+                    httpx.patch(
+                        f"{BACKEND_URL}/api/agents/{agent_id}",
+                        json={"memory": updated_memory},
+                        timeout=15,
+                    )
+        except Exception:
+            pass
+
+    if plan:
+        return (
+            f"Goal saved: {created_text}\n"
+            f"Plan remembered: {plan}\n"
+            "Next ask the user for the first concrete step if they have not already given one."
+        )
+
+    return (
+        f"Goal saved: {created_text}\n"
+        "Ask the user: How do you want to achieve this goal?"
+    )
 
 
 def _read_document_content(inputs: dict) -> str:
@@ -1840,39 +1929,6 @@ def _send_slack_message(inputs: dict, token: str) -> str:
     return f"Message sent to {channel}"
 
 
-def _send_teams_message(inputs: dict) -> str:
-    """Send a message to Microsoft Teams via the user's Prismatic instance."""
-    from prismatic_handler import get_user_integration_url, trigger_prismatic_flow
-    
-    message_content = inputs.get("message_content", "").strip()
-    target_channel = inputs.get("target_channel", "").strip()
-    user_id = str(inputs.get("user_id") or os.environ.get("PRISMATIC_USER_ID") or "").strip()
-    
-    if not message_content:
-        raise Exception("message_content cannot be empty")
-    if not target_channel:
-        raise Exception("target_channel cannot be empty")
-    if not user_id:
-        raise Exception("user_id cannot be determined for Prismatic instance lookup")
-    
-    webhook_url = get_user_integration_url(user_id, "Teams")
-    
-    # Build payload for Teams message
-    payload = {
-        "message": message_content,
-        "channel": target_channel,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    
-    # Trigger the Prismatic flow
-    success, message = trigger_prismatic_flow(webhook_url, payload)
-    
-    if success:
-        return f"Teams message sent to {target_channel}: {message}"
-    else:
-        raise Exception(f"Failed to send Teams message: {message}")
-
-
 def _create_notion_page(inputs: dict, token: str) -> str:
     r = httpx.post(
         "https://api.notion.com/v1/pages",
@@ -2150,6 +2206,13 @@ def _register_tool_registry() -> None:
     )
 
     TOOL_REGISTRY.register_category(
+        "Goals",
+        [
+            (SET_GOAL_TOOL, lambda inputs, env: _set_goal(inputs, env), None),
+        ],
+    )
+
+    TOOL_REGISTRY.register_category(
         "Memory",
         [
             (SEARCH_CUSTOMER_MEMORIES_TOOL, lambda inputs, env: _search_customer_memories(inputs), None),
@@ -2215,11 +2278,6 @@ def _register_tool_registry() -> None:
                 SEND_SLACK_MESSAGE_TOOL,
                 lambda inputs, env: _send_slack_message(inputs, env["slack_token"]),
                 lambda env: bool(env.get("slack_token")),
-            ),
-            (
-                SEND_TEAMS_MESSAGE_TOOL,
-                lambda inputs, env: _send_teams_message({**inputs, "user_id": env.get("user_id"), "external_customer_id": env.get("external_customer_id")}),
-                lambda env: bool(os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") and os.environ.get("PRISMATIC_ORG_ID")),
             ),
             (
                 CREATE_NOTION_PAGE_TOOL,

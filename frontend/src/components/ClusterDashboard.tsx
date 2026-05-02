@@ -15,9 +15,6 @@ type Appointment = {
 }
 
 const EVENT_CATEGORIES = ['Business', 'Personal', 'Chore']
-const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
-
-type CalendarViewMode = 'month' | 'day'
 
 function EventDrawer({
   open,
@@ -180,12 +177,6 @@ function categoryBadgeClassName(value?: string): string {
   return 'cluster-event-category-badge'
 }
 
-function hourLabel(hour: number): string {
-  const sample = new Date()
-  sample.setHours(hour, 0, 0, 0)
-  return sample.toLocaleTimeString(undefined, { hour: 'numeric' })
-}
-
 async function fetchEvents(): Promise<Appointment[]> {
   const response = await fetch('/api/appointments?limit=500', {
     headers: { Accept: 'application/json' },
@@ -204,9 +195,9 @@ async function fetchEvents(): Promise<Appointment[]> {
 }
 
 export function ClusterDashboard() {
-  const [viewMode, setViewMode] = useState<CalendarViewMode>('month')
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [hasGoogleCalendar, setHasGoogleCalendar] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [eventDate, setEventDate] = useState<string>(toDateInputValue(new Date()))
@@ -220,23 +211,51 @@ export function ClusterDashboard() {
   const [saveEventError, setSaveEventError] = useState<string | null>(null)
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null)
   const [resettingEvents, setResettingEvents] = useState(false)
-  const [hoveredTimePreview, setHoveredTimePreview] = useState<{ hour: number; minute: number } | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+
     async function loadData() {
       setLoading(true)
       setError(null)
       try {
+        const integrationResponse = await fetch('/api/oauth/google/status')
+        const integrationPayload = (await integrationResponse.json().catch(() => null)) as { connected?: boolean } | null
+        if (!cancelled) {
+          setHasGoogleCalendar(Boolean(integrationPayload?.connected))
+        }
+
         const events = await fetchEvents()
+        if (cancelled) return
         setAppointments(events)
       } catch {
+        if (cancelled) return
         setError('Could not load calendar events.')
       } finally {
+        if (cancelled) return
         setLoading(false)
       }
     }
 
     loadData()
+
+    const intervalId = window.setInterval(loadData, 60_000)
+    const handleFocus = () => loadData()
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadData()
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
   useEffect(() => {
@@ -275,6 +294,29 @@ export function ClusterDashboard() {
     return map
   }, [selectedDateAppointments])
 
+  const upcomingEvents = useMemo(() => {
+    const now = Date.now()
+    const sevenDaysOut = now + 7 * 24 * 60 * 60 * 1000
+
+    return appointments
+      .filter((event) => {
+        const start = new Date(event.start_time).getTime()
+        return Number.isFinite(start) && start >= now && start <= sevenDaysOut
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+      .slice(0, 6)
+  }, [appointments])
+
+  const selectedDateEvents = useMemo(() => {
+    const selectedKey = dateKey(selectedDate)
+    return appointments
+      .filter((event) => {
+        const d = new Date(event.start_time)
+        return !Number.isNaN(d.getTime()) && dateKey(d) === selectedKey
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+  }, [appointments, selectedDate])
+
   const calendarTileClass = ({ date, view }: { date: Date; view: string }): string | null => {
     if (view !== 'month') return null
     return bookedDateSet.has(dateKey(date)) ? 'cluster-booked-date' : null
@@ -283,6 +325,16 @@ export function ClusterDashboard() {
   const calendarTileContent = ({ date, view }: { date: Date; view: string }) => {
     if (view !== 'month' || !bookedDateSet.has(dateKey(date))) return null
     return <span className="cluster-booked-dot" />
+  }
+
+  function openAddEventForSelectedDate(date: Date = selectedDate) {
+    setEventDate(toDateInputValue(date))
+    setEventTime('09:00')
+    setEventTitle('')
+    setEventNote('')
+    setEventCategory('Business')
+    setSaveEventError(null)
+    setShowEventModal(true)
   }
 
   async function handleAddEvent(event: React.FormEvent<HTMLFormElement>) {
@@ -387,57 +439,18 @@ export function ClusterDashboard() {
     }
   }
 
-  function setPopupAnchor(pointerX: number, pointerY: number) {
-    const drawerWidth = 360
-    const drawerHeight = 460
-    const margin = 12
-    const preferredX = pointerX + 22
-    const preferredY = pointerY - Math.round(drawerHeight * 0.45)
-
-    const maxX = window.innerWidth - drawerWidth - margin
-    const maxY = window.innerHeight - drawerHeight - margin
-
-    setDrawerAnchor({
-      x: Math.min(Math.max(margin, preferredX), Math.max(margin, maxX)),
-      y: Math.min(Math.max(margin, preferredY), Math.max(margin, maxY)),
-    })
-  }
-
-  function minuteFromPointerInSlot(pointerEvent: React.MouseEvent<HTMLElement>) {
-    const target = pointerEvent.currentTarget as HTMLElement
-    const rect = target.getBoundingClientRect()
-    const clickOffsetY = pointerEvent.clientY - rect.top
-    const ratio = rect.height > 0 ? clickOffsetY / rect.height : 0
-    return Math.max(0, Math.min(59, Math.round(ratio * 59)))
-  }
-
-  function openAddEventAtHour(hour: number, clickEvent: React.MouseEvent<HTMLElement>) {
-    setPopupAnchor(clickEvent.clientX, clickEvent.clientY)
-    const minute = minuteFromPointerInSlot(clickEvent)
-
-    setEventDate(toDateInputValue(selectedDate))
-    setEventTime(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
-    setEventTitle('')
-    setEventNote('')
-    setEventCategory('Business')
-    setSaveEventError(null)
-    setShowEventModal(true)
-  }
-
   return (
     <div className="cluster-day-calendar-root">
       <header className="cluster-day-calendar-header">
         <div>
           <p className="cluster-main-kicker">Calendar</p>
-          <p className="cluster-sidebar-subtitle">click to add reminder or calendar</p>
-          <h1>{viewMode === 'month' ? 'Select a Date' : fmtDate(selectedDate)}</h1>
+          <p className="cluster-sidebar-subtitle">Tap a day to select it, then add or review events below.</p>
+          <h1>Month calendar</h1>
         </div>
         <div className="cluster-day-calendar-controls">
-          {viewMode === 'day' ? (
-            <button type="button" className="cluster-day-back-button" onClick={() => setViewMode('month')}>
-              Back to Month
-            </button>
-          ) : null}
+          <button type="button" className="cluster-calendar-add-button" onClick={openAddEventForSelectedDate}>
+            Add event
+          </button>
           <button type="button" className="cluster-calendar-reset-button" onClick={handleResetEvents} disabled={resettingEvents}>
             {resettingEvents ? 'Resetting...' : 'Reset Events'}
           </button>
@@ -446,95 +459,84 @@ export function ClusterDashboard() {
 
       {error ? <p className="cluster-error">{error}</p> : null}
 
-      {viewMode === 'month' ? (
-        <section className="cluster-month-shell">
-          <Calendar
-            value={selectedDate}
-            onChange={(value) => {
-              if (value instanceof Date) {
-                setSelectedDate(value)
-                setViewMode('day')
-              }
-            }}
-            onClickDay={(value) => {
-              setSelectedDate(value)
-              setViewMode('day')
-            }}
-            tileClassName={calendarTileClass}
-            tileContent={calendarTileContent}
-            className="cluster-calendar"
-          />
-          <p className="cluster-sidebar-subtitle">Pick a date to open the hourly chart.</p>
-        </section>
-      ) : (
-        <section className="cluster-day-shell">
-          {loading ? <p className="cluster-empty">Loading day schedule...</p> : null}
-
-          {!loading ? (
-            <div className="cluster-hour-grid" aria-label="Hourly planner">
-              {HOURS.map((hour) => {
-                const slotEvents = eventsByHour.get(hour) ?? []
-                return (
-                  <button
-                    key={hour}
-                    type="button"
-                    className="cluster-hour-slot"
-                    onClick={(e) => openAddEventAtHour(hour, e)}
-                    onMouseMove={(e) => {
-                      setHoveredTimePreview({ hour, minute: minuteFromPointerInSlot(e) })
-                    }}
-                    onMouseLeave={() => setHoveredTimePreview(null)}
-                  >
-                    <span className="cluster-hour-label">{hourLabel(hour)}</span>
-                    <div className="cluster-hour-content">
-                      {slotEvents.length === 0 ? (
-                        <p className="cluster-hour-empty" />
-                      ) : (
-                        slotEvents.map((event) => (
-                          <span key={event.id} className="cluster-hour-event-pill">
-                            {event.customer_name || 'Event'}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </button>
-                )
-              })}
+      <section className="cluster-month-shell">
+        <div className="cluster-month-intro">
+          <div>
+            <p className="cluster-main-kicker">Month view</p>
+            <h2>Pick a date to plan, add, or review.</h2>
+            <p className="cluster-sidebar-subtitle">This view stays on the month grid so it’s easier to scan what’s coming up.</p>
+          </div>
+          <div className="cluster-month-summary">
+            <div>
+              <span className="cluster-month-summary-label">Selected date</span>
+              <strong>{fmtDate(selectedDate)}</strong>
             </div>
-          ) : null}
+            <div>
+              <span className="cluster-month-summary-label">Events on that day</span>
+              <strong>{selectedDateEvents.length}</strong>
+            </div>
+          </div>
+        </div>
 
-          <section className="cluster-day-schedule">
-            <h3>Events on {fmtDate(selectedDate)}</h3>
-            {!loading && selectedDateAppointments.length === 0 ? (
-              <p className="cluster-empty">No events yet. Click an hour to create one.</p>
-            ) : null}
-            {selectedDateAppointments.map((event) => (
-              <div key={event.id} className="cluster-appointment-item">
-                <div className="cluster-appointment-time">
-                  <strong>{fmtTime(event.start_time)}</strong>
-                </div>
-                <div className="cluster-appointment-meta">
-                  {event.customer_name ? <span>{event.customer_name}</span> : null}
+        <Calendar
+          value={selectedDate}
+          onChange={(value) => {
+            if (value instanceof Date) {
+              setSelectedDate(value)
+            }
+          }}
+          onClickDay={(value, event) => {
+            setSelectedDate(value)
+            if (event.detail >= 2) {
+              openAddEventForSelectedDate(value)
+            }
+          }}
+          tileClassName={calendarTileClass}
+          tileContent={calendarTileContent}
+          className="cluster-calendar"
+        />
+      </section>
+
+      <section className="cluster-upcoming-events-panel">
+        <div className="cluster-upcoming-events-header">
+          <div>
+            <p className="cluster-main-kicker">Upcoming Events</p>
+            <h3>Next 7 days</h3>
+          </div>
+          <div className="cluster-upcoming-events-actions">
+            {!hasGoogleCalendar ? (
+              <a href="/api/oauth/google/start" className="cluster-calendar-connect-button">
+                Connect Google Calendar
+              </a>
+            ) : (
+              <span className="cluster-upcoming-events-connected">Google connected</span>
+            )}
+          </div>
+        </div>
+
+        {upcomingEvents.length === 0 ? (
+          <p className="cluster-empty">No upcoming events in the next 7 days.</p>
+        ) : (
+          <div className="cluster-upcoming-events-list">
+            {upcomingEvents.map((event) => {
+              const eventDate = new Date(event.start_time)
+              const isToday = eventDate.toDateString() === new Date().toDateString()
+              const isTomorrow = eventDate.toDateString() === new Date(Date.now() + 86400000).toDateString()
+              const dateLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              const timeLabel = eventDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+              return (
+                <div key={String(event.id)} className="cluster-upcoming-event-row">
+                  <div className="min-w-0 flex-1">
+                    <p className="cluster-upcoming-event-title">{event.customer_name || 'Event'}</p>
+                    <p className="cluster-upcoming-event-meta">{dateLabel} at {timeLabel}</p>
+                  </div>
                   {event.category ? <span className={categoryBadgeClassName(event.category)}>{event.category}</span> : null}
-                  {event.note ? <span>{event.note}</span> : null}
                 </div>
-                <button
-                  type="button"
-                  className="cluster-event-delete-button"
-                  onClick={() => handleDeleteEvent(event)}
-                  disabled={deletingEventId === String(event.id)}
-                  aria-label={`Delete ${event.customer_name || 'calendar event'}`}
-                  title="Delete event"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M9 3.75A2.25 2.25 0 0 1 11.25 1.5h1.5A2.25 2.25 0 0 1 15 3.75V4.5h4.5a.75.75 0 0 1 0 1.5h-1.06l-.75 12.13A2.25 2.25 0 0 1 15.44 20.5H8.56a2.25 2.25 0 0 1-2.24-2.37L5.57 6H4.5a.75.75 0 0 1 0-1.5H9v-.75Zm1.5.75v.75h3v-.75a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0-.75.75Zm-2.94 2.25.7 11.76a.75.75 0 0 0 .75.7h6.88a.75.75 0 0 0 .75-.7l.7-11.76H7.56ZM10 9a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 10 9Zm4 0a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 14 9Z" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </section>
-        </section>
-      )}
+              )
+            })}
+          </div>
+        )}
+      </section>
 
       <EventDrawer
         open={showEventModal}

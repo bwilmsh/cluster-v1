@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { prisma } from '../db'
 import { getUserIntegrationContext } from '../lib/integrationContext'
+import { getVisibleGoalsForAgent } from '../lib/goals'
 import { filesRouter } from './files'
 
 export const agentsRouter = Router()
@@ -241,7 +242,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
 
   // Save user message
   await prisma.message.create({
-    data: { agentId: id, userId: user.id, role: 'user', content: message },
+    data: { agentId: id, userId: user.id, role: 'user', content: String(message ?? '') },
   })
 
   // Fetch history + agent files + user integrations in parallel
@@ -257,6 +258,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
     }),
     getUserIntegrationContext(user.id),
   ])
+  const visibleGoals = await getVisibleGoalsForAgent(user.id, id)
   const integrationTokens = integrationContext.tokens
 
   const business_context = await getBusinessContext()
@@ -287,6 +289,7 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
         message,
         integrations: integrationTokens,
         connected_integrations: integrationContext.connectedIntegrations,
+        goals: visibleGoals,
         files: agentFiles.map((f) => ({ name: f.fileName, content: f.content })),
       }),
     })

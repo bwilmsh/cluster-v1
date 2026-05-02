@@ -52,6 +52,11 @@ Memory isolation rules:
 - When explicitly asked, call the read_agent_memory tool with the exact target agent name.
 - If the user did not ask, do not read or reference other agents' memories.
 
+Goals:
+- When the user says they want to achieve something, use the set_goal tool instead of inventing a dashboard flow or slash command.
+- After saving the goal, ask the user: "How do you want to achieve this goal?" so the plan becomes part of the conversation memory.
+- Treat the saved goal as active planning context on later turns.
+
 ## Automations — scheduling, reminders, recurring tasks
 When a user asks you to schedule something, send recurring emails/messages, or automate any repeating task — your job is to BUILD AN AUTOMATION in Activepieces, not just reply.
 
@@ -99,23 +104,6 @@ Examples:
 - "post a motivational message to #general every Monday 9am" → schedule trigger, slack send_message_to_channel
 - "remind me about my tasks every morning at 8am" → schedule trigger, send_email with a morning briefing
 
-## Sending Messages to Teams
-When the user asks to "message the team", "send a notification", or "post to Teams":
-
-1. Confirm you have the required details:
-   - message_content: What should the message say?
-   - target_channel: Which Teams channel? (e.g. "general", "#updates", or "notifications")
-2. If either detail is missing, ask the user for it. Do not guess or assume.
-3. Once you have both details, call send_teams_message with the exact values.
-4. After a successful call, confirm: "Message sent to {{channel}} via Prismatic."
-
-Examples:
-- User: "Tell the team the project is done" → Ask which channel and what specific message
-- User: "Post 'Meeting at 2pm' to #announcements" → Call send_teams_message directly
-- User: "Send a notification" → Ask what the message should say and which channel
-
-Never pretend to send a message if the tool fails. Report the error plainly to the user.
-
 ## Visual Workflows (node canvas)
 For complex multi-step logic — branching decisions, memory operations, chaining multiple checks — use build_workflow instead. This creates a visual node graph the user can edit on the canvas at /workflows/[id].
 
@@ -161,8 +149,6 @@ def _integration_context(integrations: dict) -> str:
             available.append("Email (SMTP) — send_email via GMAIL_USER credentials")
         if integrations.get("slack_token"):
             available.append("Slack — send_slack_message to any channel")
-        if os.environ.get("PRISMATIC_PRIVATE_SIGNING_KEY") and os.environ.get("PRISMATIC_ORG_ID"):
-            available.append("Microsoft Teams — send_teams_message via Prismatic marketplace instance lookup")
         if integrations.get("notion_token"):
             available.append("Notion — create_notion_page in databases")
 
@@ -171,13 +157,60 @@ def _integration_context(integrations: dict) -> str:
             "\n\n## Integrations\n"
             "No integrations connected. You can still use web_search for public data and "
             "browse_website for sites that don't require login. "
-            "For email access, sheets, or sending messages, the user needs to connect an integration."
+            "For email access, sheets, or sending messages, the user needs to connect an integration or build an automation in Activepieces."
         )
 
     lines = ["Connected — you have tools for ALL of these, use them proactively:"]
     for item in available:
         lines.append(f"  • {item}")
     return "\n\n## Connected Integrations\n" + "\n".join(lines)
+
+
+def _goals_context(integrations: dict) -> str:
+    """Build a Goals section when the workspace has active goals provided in integrations."""
+    goals = integrations.get("goals") or integrations.get("active_goal")
+    if not goals:
+        return (
+            "\n\n## Active Goals\n"
+            "No active goal is loaded right now. Do not mention a database issue or missing storage.\n"
+            "If the user asks about goals or wants to set one, use the set_goal tool and then ask how they want to achieve it.\n"
+            "If you still need a fallback, say you don't have a current goal loaded and ask for the user's top priority, deadline, or what should be protected on the calendar.\n"
+            "Keep the response practical and goal-focused."
+        )
+
+    # Normalize to list
+    if isinstance(goals, str):
+        goals_list = [goals]
+    elif isinstance(goals, dict) and goals.get("goal_text"):
+        goals_list = [goals.get("goal_text")]
+    elif isinstance(goals, list):
+        goals_list = [g.get("goal_text") if isinstance(g, dict) and g.get("goal_text") else str(g) for g in goals]
+    else:
+        return ""
+
+    lines = ["\n\n## Active Goals — prioritize these when planning or scheduling:"]
+    for g in goals_list:
+        if not g:
+            continue
+        text = str(g).strip()
+        if not text:
+            continue
+        lines.append(f"  • {text}")
+
+    lines.append(
+        "\nRules when a goal is active:\n"
+        "- You can see this goal because the user selected you for it. Treat that as explicit permission and priority.\n"
+        "- Treat the active goal as the user's top priority for planning and scheduling decisions.\n"
+        "- When proposing schedule changes or building a day, prefer actions that advance this goal (time-blocking, focused work slots, batching related tasks).\n"
+        "- If a calendar conflict would block progress toward the goal, propose rescheduling lower-priority events and ask for confirmation before making changes.\n"
+        "- Only use memory entries that are recent and directly relevant to the active goal when crafting plans.\n"
+        "- If the goal is vague or underspecified, ask exactly one concise follow-up question about how the user wants to achieve it before you plan.\n"
+        "- The purpose of that question is to improve your memory of the goal, not to stall the conversation.\n"
+        "- Never say you cannot help because of a database connection issue when discussing goals; translate that into a brief, helpful prompt for the user instead.\n"
+        "- If the user gives a new conflicting goal, ask whether to replace or run alongside the existing goal."
+    )
+
+    return "\n".join(lines)
 
 
 def _today_context() -> str:
@@ -230,6 +263,9 @@ def build_system_prompt(
         integration_block = _integration_context(integrations)
         if integration_block:
             prompt += integration_block
+        goals_block = _goals_context(integrations)
+        if goals_block:
+            prompt += goals_block
 
     if files:
         files_block = "\n\n## Uploaded files\n"
@@ -400,6 +436,11 @@ Calendar and day-planning behavior:
 - For productivity day plans, use memory only when it is clearly current and relevant to today/this week.
 - If a memory detail is stale, undated, or clearly old, do not mention it in the plan.
 
+- If there is an active goal present in the workspace (see Goals section in system prompt), treat it as the top priority:
+    - Prefer schedule and plan changes that advance the active goal (time-blocking, focused work slots, batching related tasks).
+    - When a calendar conflict would block progress, propose rescheduling lower-priority events and ask for confirmation before changing anything.
+    - Ask clarifying questions if multiple goals conflict: "Do you want this new goal to replace the current goal, or run alongside it?"
+
 Quick win reinforcement:
 - When the user completes something or reports a win, start with one short quick-win line that celebrates progress and momentum.
 - Keep the quick win concrete and tied to what was completed.
@@ -450,5 +491,7 @@ Update only {agent_name}'s own memory file with anything worth remembering from 
 ## What Doesn't
 ## Ongoing Tasks
 ## Important Notes
+
+If the conversation includes an active goal, preserve the goal wording and any deadline, success criteria, constraints, or tradeoffs that came up. Put goal details under Ongoing Tasks or Important Notes so the goal stays usable in future planning.
 
 Return only the updated memory file content, nothing else."""

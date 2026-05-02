@@ -149,10 +149,16 @@ export default function GroupChatPage() {
     : []
 
   if (!chat) return (
-    <div className="h-full flex flex-col">
-      <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
-        <div className="w-6 h-4 bg-white/5 rounded animate-pulse" />
-        <div className="w-40 h-4 bg-white/5 rounded animate-pulse" />
+    <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
+      <div
+        className="shrink-0 border-b px-6 h-16 flex items-center gap-3"
+        style={{
+          borderColor: 'var(--border)',
+          backgroundColor: 'var(--bg-secondary)',
+        }}
+      >
+        <div className="w-6 h-4 rounded animate-pulse" style={{ backgroundColor: 'var(--bg-tertiary)' }} />
+        <div className="w-40 h-4 rounded animate-pulse" style={{ backgroundColor: 'var(--bg-tertiary)' }} />
       </div>
       <div className="flex-1 flex items-center justify-center">
         <LoadingDots />
@@ -161,15 +167,27 @@ export default function GroupChatPage() {
   )
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
       {/* Header */}
-      <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
-        <Link href="/groupchats" className="text-white/30 hover:text-white/60 text-sm transition-colors shrink-0">
+      <div
+        className="shrink-0 border-b px-6 h-16 flex items-center gap-4"
+        style={{
+          borderColor: 'var(--border)',
+          backgroundColor: 'var(--bg-secondary)',
+        }}
+      >
+        <Link
+          href="/groupchats"
+          className="text-sm transition-colors hover:font-semibold"
+          style={{ color: 'var(--text-tertiary)' }}
+        >
           ←
         </Link>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-white text-sm truncate">{chat.name}</p>
-          <p className="text-[11px] text-white/35">
+          <p className="font-semibold text-base truncate" style={{ color: 'var(--text-primary)' }}>
+            {chat.name}
+          </p>
+          <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
             {members.length} agent{members.length !== 1 ? 's' : ''}
           </p>
         </div>
@@ -178,7 +196,11 @@ export default function GroupChatPage() {
         <div ref={menuRef} className="relative shrink-0">
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-white/30 hover:text-white/60 hover:bg-white/8 transition-colors"
+            className="w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 hover:shadow-md"
+            style={{
+              backgroundColor: 'var(--accent-muted)',
+              color: 'var(--accent)',
+            }}
           >
             <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
               <circle cx="8" cy="3" r="1.5" />
@@ -187,17 +209,32 @@ export default function GroupChatPage() {
             </svg>
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-10 z-20 bg-surface-raised border border-surface-border rounded-xl shadow-xl shadow-black/40 py-1 min-w-[160px]">
+            <div
+              className="absolute right-0 top-11 z-20 rounded-lg shadow-lg py-1 min-w-[180px] border"
+              style={{
+                backgroundColor: 'var(--bg-secondary)',
+                borderColor: 'var(--border)',
+              }}
+            >
               <button
                 onClick={() => { setMenuOpen(false); setShowAddModal(true) }}
-                className="w-full text-left px-4 py-2 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                className="w-full text-left px-4 py-2.5 text-sm transition-colors"
+                style={{ color: 'var(--text-secondary)' }}
+                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent-muted)')}
+                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 Add Agent
               </button>
-              <div className="h-px bg-surface-border mx-2 my-1" />
+              <div
+                className="h-px mx-2 my-1"
+                style={{ backgroundColor: 'var(--border)' }}
+              />
               <button
                 onClick={() => { setMenuOpen(false); handleDeleteChat() }}
-                className="w-full text-left px-4 py-2 text-sm text-rose-400 hover:text-rose-300 hover:bg-white/5 transition-colors"
+                className="w-full text-left px-4 py-2.5 text-sm transition-colors"
+                style={{ color: 'var(--error)' }}
+                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)')}
+                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 Delete Chat
               </button>
@@ -251,17 +288,34 @@ function AddMemberModal({
   const available = agents.filter((a) => !currentMemberAgentIds.includes(a.id))
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-surface-raised border border-surface-border rounded-2xl w-full max-w-sm p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-white">Add Agent</h2>
-          <button onClick={onClose} className="text-white/30 hover:text-white/60 text-sm transition-colors">
+    <div
+      className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+      onClick={onClose}
+    >
+      <div
+        className="rounded-lg w-full max-w-sm p-6 border shadow-lg"
+        style={{
+          backgroundColor: 'var(--bg-secondary)',
+          borderColor: 'var(--border)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+            Add Agent
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-sm transition-colors font-medium hover:font-bold"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
             ✕
           </button>
         </div>
 
         {available.length === 0 ? (
-          <p className="text-white/30 text-sm text-center py-4">
+          <p className="text-sm text-center py-6" style={{ color: 'var(--text-tertiary)' }}>
             All your agents are already in this chat.
           </p>
         ) : (
@@ -275,7 +329,14 @@ function AddMemberModal({
                   setAdding(null)
                 }}
                 disabled={adding !== null}
-                className="w-full text-left rounded-xl border border-surface-border px-4 py-3 text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors disabled:opacity-40"
+                className="w-full text-left rounded-lg px-4 py-3 text-sm font-medium transition-all duration-200 border disabled:opacity-40 hover:-translate-y-0.5"
+                style={{
+                  backgroundColor: 'var(--bg-primary)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-primary)',
+                }}
+                onMouseOver={(e) => (e.currentTarget.style.borderColor = 'var(--border-strong)')}
+                onMouseOut={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
               >
                 {agent.name}
               </button>

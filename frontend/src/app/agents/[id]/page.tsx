@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import Link from 'next/link'
 import { api, Agent, AgentFile, Message } from '@/lib/api'
 import { ChatWindow, ChatMessage } from '@/components/ChatWindow'
 import { ComputerUsePanel } from '@/components/ComputerUsePanel'
@@ -196,9 +195,6 @@ export default function AgentChatPage() {
               Screen Control
             </button>
           )}
-          <Link href="/integrations" className="text-xs text-white/30 hover:text-white/60 transition-colors">
-            Integrations
-          </Link>
         </div>
       </div>
 
@@ -218,6 +214,7 @@ export default function AgentChatPage() {
             uploading={uploading}
             automationMode={automationMode}
             onAutomationModeChange={handleAutomationModeChange}
+            helperText="Tell me what you want to achieve and I’ll turn it into a goal, then ask how you want to achieve it."
           />
         </div>
 
