@@ -10,11 +10,13 @@ import { clusterRouter } from './routes/cluster'
 import { browseRouter } from './routes/browse'
 import { credentialsRouter } from './routes/credentials'
 import { appointmentsRouter } from './routes/appointments'
+import { schedulerRouter } from './routes/scheduler'
 import { memoriesRouter } from './routes/memories'
 import { goalsRouter } from './routes/goals'
 import { automationsRouter, loadAutomations } from './routes/automations'
 import { workflowsRouter } from './routes/workflows'
 import { activepiecesRouter } from './routes/activepieces'
+import { authRouter } from './routes/auth'
 import { loadWorkflows } from './workflows/runner'
 import { seedTemplates } from './automations/seeder'
 
@@ -37,11 +39,13 @@ app.use('/api/cluster', clusterRouter)
 app.use('/api/browse', browseRouter)
 app.use('/api/credentials', credentialsRouter)
 app.use('/api/appointments', appointmentsRouter)
+app.use('/api/scheduler', schedulerRouter)
 app.use('/api/memories', memoriesRouter)
 app.use('/api/goals', goalsRouter)
 app.use('/api/automations', automationsRouter)
 app.use('/api/workflows', workflowsRouter)
 app.use('/api/activepieces', activepiecesRouter)
+app.use('/api/auth', authRouter)
 
 const PORT = process.env.BACKEND_PORT ?? 3001
 app.listen(PORT, async () => {
