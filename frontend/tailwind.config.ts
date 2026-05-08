@@ -18,11 +18,16 @@ const config: Config = {
         accent: {
           DEFAULT: '#6366f1',
           hover: '#4f52d4',
+          teal: '#4fb8a8',
+          'teal-hover': '#3c9a8c',
         },
       },
       fontFamily: {
         sans: ['var(--font-geist-sans)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-geist-mono)', 'monospace'],
+      },
+      letterSpacing: {
+        tighter: '-0.03em',
       },
     },
   },
