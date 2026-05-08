@@ -11,6 +11,8 @@ model User {
   id              String           @id @default(cuid())
   email           String           @unique
   name            String
+  passwordHash    String?          // nullable — existing users have none
+  plan            Plan             @default(FREE)
   createdAt       DateTime         @default(now())
   agents          Agent[]
   groupChats      GroupChat[]
@@ -23,6 +25,12 @@ model User {
   automations      Automation[]
   browseActivities BrowseActivity[]
   workflows        Workflow[]
+}
+
+enum Plan {
+  FREE
+  PRO
+  MAX
 }
 
 model OAuthConfig {
@@ -241,4 +249,23 @@ model Goal {
   visibleAgentIds Json     @default("[]")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model Event {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  start_time      DateTime
+  end_time        DateTime?
+  location        String?
+  google_event_id String?
+  itemType        String?   // "event" | "task" | "appointment"
+  status          String    @default("todo") // "todo" | "in-progress" | "done" | custom
+  priority        String    @default("medium") // "low" | "medium" | "high"
+  reminderTime    DateTime?
+  reminderSent    Boolean   @default(false)
+  assignee        String?
+  tags            String[]  @default([])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
