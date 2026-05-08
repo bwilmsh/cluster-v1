@@ -61,7 +61,7 @@
   --error: #ef4444;
 }
 
-/* ── Design system v2 ────────────────────────────────── */
+/* ── Design system v2 — MUST appear after :root.light-mode above ─ */
 :root, :root.dark-mode {
   --accent-indigo: #6366f1;
   --accent-indigo-hover: #4f52d4;
@@ -118,6 +118,7 @@
   background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: transparent;  /* Firefox fallback */
   background-clip: text;
   animation: shimmer 3s linear infinite;
 }
@@ -146,7 +147,7 @@
   transition: box-shadow 200ms, border-color 200ms;
 }
 .workflow-card:hover {
-  border-color: rgba(79, 184, 168, 0.4) !important;
+  border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(79, 184, 168, 0.2), 0 4px 20px rgba(79, 184, 168, 0.08);
 }
 
