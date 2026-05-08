@@ -61,6 +61,95 @@
   --error: #ef4444;
 }
 
+/* ── Design system v2 ────────────────────────────────── */
+:root, :root.dark-mode {
+  --accent-indigo: #6366f1;
+  --accent-indigo-hover: #4f52d4;
+  --glass-bg: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 12px;
+  --glow-teal: rgba(79, 184, 168, 0.12);
+  --glow-indigo: rgba(99, 102, 241, 0.12);
+  --dot-grid: rgba(255, 255, 255, 0.04);
+}
+
+:root.light-mode {
+  --accent-indigo: #4f46e5;
+  --accent-indigo-hover: #3730a3;
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-blur: 12px;
+  --glow-teal: rgba(44, 159, 141, 0.18);
+  --glow-indigo: rgba(79, 70, 229, 0.18);
+  --dot-grid: rgba(0, 0, 0, 0.04);
+}
+
+/* ── Keyframes ───────────────────────────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+/* ── Utility classes ─────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.animate-fade-slide-up {
+  animation: fadeSlideUp 300ms ease-out both;
+}
+
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--text-primary) 0%,
+    var(--accent) 40%,
+    var(--accent-indigo) 60%,
+    var(--text-primary) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+}
+
+.dot-grid-bg {
+  background-image: radial-gradient(var(--dot-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.section-accent-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-accent-bar::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 1.1em;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.workflow-card {
+  transition: box-shadow 200ms, border-color 200ms;
+}
+.workflow-card:hover {
+  border-color: rgba(79, 184, 168, 0.4) !important;
+  box-shadow: 0 0 0 1px rgba(79, 184, 168, 0.2), 0 4px 20px rgba(79, 184, 168, 0.08);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -682,6 +771,12 @@ body {
   border-color: var(--border);
 }
 
+/* Hide arrow navigation buttons but keep month/year button */
+.cluster-calendar .react-calendar__navigation button:first-child,
+.cluster-calendar .react-calendar__navigation button:last-child {
+  display: none;
+}
+
 .cluster-calendar .react-calendar__month-view__days {
   display: grid !important;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1155,25 +1250,25 @@ body {
 }
 
 .cluster-upcoming-events-panel {
-  margin-top: 20px;
+  margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.03);
-  padding: 16px;
+  padding: 10px;
 }
 
 .cluster-upcoming-events-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .cluster-upcoming-events-header h3 {
-  margin: 4px 0 0;
+  margin: 0 0 0;
   color: var(--text-primary);
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .cluster-upcoming-events-actions {
@@ -1193,31 +1288,43 @@ body {
 
 .cluster-upcoming-events-list {
   display: grid;
-  gap: 10px;
+  gap: 6px;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 100vh;
+  }
 }
 
 .cluster-upcoming-event-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: rgba(0, 0, 0, 0.12);
-  padding: 12px 14px;
+  padding: 8px 10px;
 }
 
 .cluster-upcoming-event-title {
   margin: 0;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .cluster-upcoming-event-meta {
-  margin: 3px 0 0;
+  margin: 2px 0 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .cluster-calendar-reset-button {
