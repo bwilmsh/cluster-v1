@@ -368,19 +368,19 @@ export function Sidebar() {
             >
               <Link
                 href={href}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors"
+                className="flex items-center gap-2.5 py-2 rounded-lg text-sm transition-colors"
                 style={{
                   color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  backgroundColor: isActive ? 'rgba(255,255,255,0.07)' : 'transparent',
+                  backgroundColor: 'transparent',
                   fontWeight: isActive ? 500 : 400,
+                  borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
+                  paddingLeft: '9px',
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = isActive
-                    ? 'rgba(255,255,255,0.07)'
-                    : 'transparent'
+                  e.currentTarget.style.backgroundColor = 'transparent'
                 }}
               >
                 <Icon className="w-4 h-4 shrink-0" />
@@ -433,12 +433,12 @@ export function Sidebar() {
               >
                 <Link
                   href={`/agents/${agent.id}`}
-                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs truncate transition-colors"
+                  className="flex items-center gap-2.5 py-1.5 rounded-lg text-xs truncate transition-colors"
                   style={{
                     color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    backgroundColor: isSelected
-                      ? 'rgba(239,68,68,0.14)'
-                      : (isActive ? 'var(--bg-tertiary)' : 'transparent'),
+                    backgroundColor: isSelected ? 'rgba(239,68,68,0.14)' : 'transparent',
+                    borderLeft: isActive && !isSelected ? '3px solid var(--accent)' : '3px solid transparent',
+                    paddingLeft: '7px',
                   }}
                   onClick={(e) => {
                     if (deleteMode) {
@@ -450,11 +450,7 @@ export function Sidebar() {
                     if (!isActive && !isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
                   }}
                   onMouseLeave={(e) => {
-                    if (isSelected) {
-                      e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.14)'
-                    } else {
-                      e.currentTarget.style.backgroundColor = isActive ? 'var(--bg-tertiary)' : 'transparent'
-                    }
+                    e.currentTarget.style.backgroundColor = isSelected ? 'rgba(239,68,68,0.14)' : 'transparent'
                   }}
                 >
                   {deleteMode ? (
