@@ -7,6 +7,7 @@ import { ChatWindow, ChatMessage } from '@/components/ChatWindow'
 import { ComputerUsePanel } from '@/components/ComputerUsePanel'
 import { LoadingDots } from '@/components/LoadingDots'
 import { readSSE } from '@/lib/sse'
+import Link from 'next/link'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
@@ -45,16 +46,35 @@ export default function AgentChatPage() {
         }
       }
     } finally {
-      const content = streamingContentRef.current
-      if (content) {
-        setMessages((msgs) => [
-          ...msgs,
-          { id: Date.now().toString() + '-a', role: 'assistant', content },
-        ])
-      }
-      setStreamingContent('')
-      streamingContentRef.current = ''
-      setStreaming(false)
+        const content = streamingContentRef.current
+        if (content) {
+          setMessages((msgs) => [
+            ...msgs,
+            { id: Date.now().toString() + '-a', role: 'assistant', content },
+          ])
+        } else {
+          try {
+            const msgs = await api.agents.messages(id)
+            const fetchedMessages = msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content }))
+            setMessages((prev) => {
+              if (prev.length === 0) return fetchedMessages
+
+              const merged = [...prev]
+              for (const m of fetchedMessages) {
+                const alreadyPresent = merged.some(
+                  (x) => x.id === m.id || (x.role === m.role && x.content === m.content)
+                )
+                if (!alreadyPresent) merged.push(m)
+              }
+              return merged
+            })
+          } catch {
+            // ignore network errors
+          }
+        }
+        setStreamingContent('')
+        streamingContentRef.current = ''
+        setStreaming(false)
     }
   }, [streaming, id])
 

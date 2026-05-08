@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { ThemeProvider } from '@/lib/themeContext'
-import { Sidebar } from '@/components/Sidebar'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -22,12 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         }}
       >
         <ThemeProvider>
-          <div className="flex h-full">
-            <Sidebar />
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-              {children}
-            </div>
-          </div>
+          {children}
         </ThemeProvider>
       </body>
     </html>

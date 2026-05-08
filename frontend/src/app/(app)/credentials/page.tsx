@@ -4,6 +4,12 @@ import { useEffect, useState } from 'react'
 import { api, WebCredential } from '@/lib/api'
 import { LoadingDots } from '@/components/LoadingDots'
 
+type GoogleIntegrationInfo = {
+  accountEmail?: string | null
+  accountName?: string | null
+  expiresAt?: string | null
+}
+
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime()
   const days = Math.floor(diff / 86400000)
@@ -14,14 +20,54 @@ function timeAgo(dateStr: string) {
 
 export default function CredentialsPage() {
   const [creds, setCreds] = useState<WebCredential[]>([])
+  const [googleConnected, setGoogleConnected] = useState(false)
+  const [googleIntegration, setGoogleIntegration] = useState<GoogleIntegrationInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [googleLoading, setGoogleLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ siteName: '', siteUrl: '', username: '', password: '' })
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    api.credentials.list().then(setCreds).finally(() => setLoading(false))
+    let cancelled = false
+
+    async function loadData() {
+      setLoading(true)
+      setGoogleLoading(true)
+
+      try {
+        const [credentialList, googleStatusResponse] = await Promise.all([
+          api.credentials.list(),
+          fetch('/api/oauth/google/status'),
+        ])
+
+        const googleStatus = (await googleStatusResponse.json().catch(() => null)) as {
+          connected?: boolean
+          integration?: GoogleIntegrationInfo | null
+        } | null
+
+        if (cancelled) return
+
+        setCreds(credentialList)
+        setGoogleConnected(Boolean(googleStatus?.connected))
+        setGoogleIntegration(googleStatus?.integration ?? null)
+      } finally {
+        if (cancelled) return
+        setLoading(false)
+        setGoogleLoading(false)
+      }
+    }
+
+    loadData()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
+
+  async function handleConnectGoogle() {
+    window.location.href = '/api/oauth/google/start'
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -59,6 +105,45 @@ export default function CredentialsPage() {
           >
             + Add Credential
           </button>
+        </div>
+
+        <div className="mb-6 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_42%),linear-gradient(180deg,rgba(15,18,26,0.98),rgba(9,11,16,0.98))] p-5 shadow-[0_18px_55px_rgba(0,0,0,0.28)]">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0 space-y-2">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/55">
+                Google Calendar
+              </div>
+              <p className="text-sm text-white/72">
+                {googleLoading
+                  ? 'Checking your Google Calendar connection...'
+                  : googleConnected
+                    ? 'Google Calendar is connected for this account and ready to sync events.'
+                    : 'No Google account is connected yet. Connect one here to sync calendar events.'}
+              </p>
+              {!googleLoading && googleConnected ? (
+                <p className="text-xs text-white/38">
+                  {googleIntegration?.accountName || googleIntegration?.accountEmail
+                    ? `${googleIntegration.accountName ?? 'Google account'}${googleIntegration.accountEmail ? ` · ${googleIntegration.accountEmail}` : ''}`
+                    : 'Connected account'}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-3">
+              {!googleLoading && googleConnected ? (
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3.5 py-2 text-sm font-medium text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                  Connected
+                </span>
+              ) : null}
+              <button
+                onClick={handleConnectGoogle}
+                className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-cyan-400 to-emerald-400 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(56,189,248,0.28)] transition-transform hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(56,189,248,0.36)]"
+              >
+                {googleConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Info banner */}
