@@ -13,7 +13,8 @@ AI agent platform — Phase 1.
    ```bash
    cp .env.example .env
    cp agent/.env.example agent/.env
-   # Edit .env: set DATABASE_URL and ANTHROPIC_API_KEY
+   # Edit .env: set DATABASE_URL and API provider keys
+   # Set AGENT_API_PROVIDER=anthropic (or nvidia) and provide the corresponding API key(s)
    ```
 
 2. Install all dependencies:
@@ -50,7 +51,7 @@ Services run at:
 - `GET  /api/health` — Health check
 - `GET  /api/agents` — List agents
 - `POST /api/agents` — Create agent
-- `POST /api/agents/generate-questions` — Generate setup questions (via Claude)
+-- `POST /api/agents/generate-questions` — Generate setup questions (via configured provider)
 - `POST /api/agents/:id/chat` — Chat with agent (SSE)
 - `GET  /api/groupchats` — List group chats
 - `POST /api/groupchats` — Create group chat

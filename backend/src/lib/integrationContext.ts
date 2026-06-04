@@ -1,4 +1,5 @@
 import { prisma } from '../db'
+import { getOAuthCredentials } from '../routes/oauth-config'
 
 export type IntegrationTokenMap = Record<string, string>
 
@@ -98,12 +99,15 @@ async function refreshGoogleToken(
   provider: string,
 ): Promise<string | null> {
   try {
+    const creds = await getOAuthCredentials('google')
+    if (!creds) return null
+
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
       }),

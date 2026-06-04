@@ -1,12 +1,183 @@
 import { Router, Request, Response } from 'express'
-import { getDefaultUser } from '../db'
+import { getDefaultUser, prisma } from '../db'
 import { getUserIntegrationContext } from '../lib/integrationContext'
 import {
-  createGoogleCalendarEvent,
-  deleteGoogleCalendarEvent,
-  listGoogleCalendarEvents,
-  updateGoogleCalendarEvent,
-} from '../lib/googleCalendar'
+  createCalendarEvent,
+  deleteCalendarEvent,
+  listCalendarEvents,
+  updateCalendarEvent,
+} from '../lib/calai'
+import { deleteGoogleCalendarEvent, listGoogleCalendarEvents, updateGoogleCalendarEvent } from '../lib/googleCalendar'
+import { createSupabaseClusterEvent, listSupabaseClusterEvents } from '../lib/supabaseClusterEvents'
+import { suggestHabitSlot } from '../lib/groq'
+
+type UnifiedCalendarRecord = {
+  id: string | number
+  customer_id: number | null
+  customer_name: string | null
+  customer_email: string | null
+  note?: string | null
+  category?: string | null
+  location?: string | null
+  itemType?: 'event' | 'task' | 'habit' | null
+  start_time: string
+  end_time: string | null
+  status: string
+  source: 'google' | 'cluster'
+}
+
+async function fetchClusterBlocks(limit: number, upcomingOnly: boolean): Promise<UnifiedCalendarRecord[]> {
+  try {
+    const rows = await prisma.event.findMany({
+      where: {
+        OR: [
+          { itemType: { in: ['task', 'event', 'habit'] } },
+          { itemType: null },
+        ],
+        ...(upcomingOnly ? { start_time: { gte: new Date() } } : {}),
+      },
+      orderBy: { start_time: 'asc' },
+      take: limit,
+    })
+
+    const localBlocks: UnifiedCalendarRecord[] = rows.map((row) => ({
+      id: row.id,
+      customer_id: null,
+      customer_name: row.title,
+      customer_email: null,
+      note: row.description,
+      category: null,
+      location: row.location,
+      itemType: (row.itemType === 'task' ? 'task' : (row.itemType === 'habit' ? 'habit' : 'event')) as 'event' | 'task' | 'habit',
+      start_time: row.start_time.toISOString(),
+      end_time: row.end_time ? row.end_time.toISOString() : null,
+      status: row.status,
+      source: 'cluster' as const,
+    }))
+
+    let remoteBlocks: UnifiedCalendarRecord[] = []
+    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+    if (supabaseUrl && supabaseKey) {
+      const remote = await listSupabaseClusterEvents({ url: supabaseUrl, key: supabaseKey }, limit)
+      if (remote.ok) {
+        remoteBlocks = remote.data.map((row) => ({
+          id: row.id,
+          customer_id: null,
+          customer_name: row.title,
+          customer_email: null,
+          note: row.description ?? null,
+          category: null,
+          location: row.location ?? null,
+          itemType: row.itemType === 'task' ? 'task' : 'event',
+          start_time: row.start_time,
+          end_time: row.end_time ?? null,
+          status: row.status ?? 'todo',
+          source: 'cluster' as const,
+        }))
+      }
+    }
+
+    const clusterById = new Map<string, UnifiedCalendarRecord>()
+    for (const block of [...remoteBlocks, ...localBlocks]) {
+      clusterById.set(String(block.id), block)
+    }
+
+    return [...Array.from(clusterById.values())]
+  } catch {
+    return []
+  }
+}
+
+async function writeClusterEvent(
+  config: { url: string; key: string },
+  input: {
+    title: string
+    note: string
+    location: string
+    itemType: 'event' | 'task'
+    startTime: string
+    endTime: string | null
+  },
+): Promise<{ ok: true; appointment: UnifiedCalendarRecord } | { ok: false; status: number; details: string }> {
+  let scheduleReason: string | null = null
+
+  // If no start time provided, try to get a Groq suggestion for today's date
+  if (!input.startTime) {
+    try {
+      const dateForSuggestion = new Date().toISOString().slice(0, 10)
+      const durationMinutes = 30
+      const dayStart = new Date(`${dateForSuggestion}T00:00:00Z`)
+      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+      const dayEvents = await prisma.event.findMany({
+        where: { start_time: { gte: dayStart, lt: dayEnd } },
+        select: { title: true, start_time: true, end_time: true, description: true, itemType: true },
+      })
+
+      const groqEvents = dayEvents.map((e) => ({
+        title: e.title ?? null,
+        start_time: e.start_time ? e.start_time.toISOString() : new Date().toISOString(),
+        end_time: e.end_time ? e.end_time.toISOString() : null,
+        description: e.description ?? null,
+        itemType: e.itemType ?? null,
+      }))
+
+      const suggestion = await suggestHabitSlot({
+        habitName: String(input.title ?? 'Event'),
+        durationMinutes,
+        habitNote: typeof input.note === 'string' ? input.note : null,
+        events: groqEvents,
+      })
+
+      if (suggestion) {
+        input.startTime = `${dateForSuggestion}T${suggestion.startTime}:00Z`
+        input.endTime = new Date(new Date(input.startTime).getTime() + durationMinutes * 60 * 1000).toISOString()
+        // persist the reason in description if not present
+        input.note = input.note || ''
+        input.note = input.note + (input.note ? '\n' : '') + `Schedule reason: ${suggestion.reason}`
+        scheduleReason = suggestion.reason
+      }
+    } catch (err) {
+      console.error('Groq suggestion for appointment failed:', err)
+    }
+  }
+
+  const created = await createSupabaseClusterEvent(config, {
+    id: String(Date.now()),
+    title: input.title || 'Event',
+    description: input.note || null,
+    start_time: input.startTime,
+    end_time: input.endTime,
+    scheduleReason: scheduleReason ?? null,
+    location: input.location || null,
+    google_event_id: null,
+    itemType: input.itemType,
+    status: input.itemType === 'task' ? 'todo' : 'scheduled',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  })
+
+  if (!created.ok) {
+    return created
+  }
+
+  return {
+    ok: true as const,
+    appointment: {
+      id: created.appointment.id,
+      customer_id: null,
+      customer_name: created.appointment.title,
+      customer_email: null,
+      note: created.appointment.description ?? null,
+      category: null,
+      location: created.appointment.location ?? null,
+      itemType: created.appointment.itemType === 'task' ? 'task' : 'event',
+      start_time: created.appointment.start_time,
+      end_time: created.appointment.end_time ?? null,
+      status: created.appointment.status ?? (input.itemType === 'task' ? 'todo' : 'scheduled'),
+      source: 'cluster',
+    },
+  }
+}
 
 export const appointmentsRouter = Router()
 
@@ -22,6 +193,8 @@ type SupabaseAppointment = {
 type AppointmentDetails = {
   note?: string | null
   category?: string | null
+  location?: string | null
+  itemType?: 'event' | 'task' | null
 }
 
 type SupabaseLegacyEvent = {
@@ -52,6 +225,8 @@ type CreateAppointmentBody = {
   time?: string
   note?: string
   category?: string
+  location?: string
+  itemType?: 'event' | 'task'
   start_time?: string
   end_time?: string
   duration_minutes?: number
@@ -128,26 +303,102 @@ function normalizeEventCategory(category?: string) {
 
 function parseIsoOrNull(value?: string) {
   if (!value) return null
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
+  const trimmed = value.trim()
+  
+  // First try standard ISO parsing
+  const parsed = new Date(trimmed)
+  if (!Number.isNaN(parsed.getTime())) return parsed
+  
+  // Try to parse as local date with 12-hour time format
+  // Patterns: "2026-05-04 9:30am", "2026-05-04T9:30am", "May 4, 2026 9:30am"
+  const dateTimeMatch = trimmed.match(/^(.+?)\s+(\d{1,2}(?::\d{2})?(?::\d{2})?\s*(?:am|pm))$/i)
+  if (dateTimeMatch) {
+    const datePart = dateTimeMatch[1]
+    const timePart = convert12HourTo24Hour(dateTimeMatch[2])
+    const combined = `${datePart}T${timePart}`
+    const parsed2 = new Date(combined)
+    if (!Number.isNaN(parsed2.getTime())) return parsed2
+  }
+  
+  return null
 }
 
-function formatIsoDate(value: Date) {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  const hours = String(value.getHours()).padStart(2, '0')
-  const minutes = String(value.getMinutes()).padStart(2, '0')
-  const seconds = String(value.getSeconds()).padStart(2, '0')
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`
+function formatIsoDate(value: Date | string) {
+  // If already an ISO string with timezone, preserve it exactly
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    // Check if it already has timezone info (ends with Z or ±HH:MM)
+    if (/[Z+-]\d{2}:\d{2}$/.test(trimmed) || trimmed.endsWith('Z')) {
+      return trimmed
+    }
+    // Try to parse and format as proper ISO
+    const parsed = new Date(trimmed)
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString()
+    }
+    return trimmed
+  }
+  
+  // For Date objects, use toISOString()
+  return value.toISOString()
+}
+
+function convert12HourTo24Hour(time12: string): string {
+  const text = time12.trim().toLowerCase()
+  
+  // Match 12-hour format: HH:MM am/pm or H:MM am/pm or HH am/pm or H am/pm
+  const match = text.match(/^(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)$/i)
+  if (!match) return time12 // Not 12-hour format, return as-is
+  
+  let hours = parseInt(match[1], 10)
+  const minutes = match[2] ? match[2] : '00'
+  const seconds = match[3] ? match[3] : '00'
+  const period = match[4].toLowerCase()
+  
+  // Validate hours (1-12 for 12-hour format)
+  if (hours < 1 || hours > 12) return time12
+  
+  // Convert to 24-hour format
+  if (period === 'am') {
+    if (hours === 12) hours = 0 // 12 AM = 00:00
+  } else { // pm
+    if (hours !== 12) hours += 12 // 1 PM = 13:00, but 12 PM = 12:00
+  }
+  
+  return `${String(hours).padStart(2, '0')}:${minutes}:${seconds}`
 }
 
 function parseDateAndTimeOrNull(date?: string, time?: string) {
   const d = String(date ?? '').trim()
-  const t = String(time ?? '').trim()
+  let t = String(time ?? '').trim()
   if (!d || !t) return null
+  
+  // Convert 12-hour format (with am/pm) to 24-hour format
+  t = convert12HourTo24Hour(t)
+  
   const parsed = new Date(`${d}T${t}`)
   return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function isLocalIsoDateTime(value?: string) {
+  const text = String(value ?? '').trim()
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(text)
+}
+
+function normalizeLocalIsoDateTime(value?: string) {
+  const text = String(value ?? '').trim()
+  if (!isLocalIsoDateTime(text)) return null
+  return text.length === 16 ? `${text}:00` : text
+}
+
+function buildLocalIsoFromDateAndTime(date?: string, time?: string) {
+  const d = String(date ?? '').trim()
+  let t = String(time ?? '').trim()
+  if (!d || !t) return null
+  t = convert12HourTo24Hour(t)
+  if (/^\d{2}:\d{2}$/.test(t)) return `${d}T${t}:00`
+  if (/^\d{2}:\d{2}:\d{2}$/.test(t)) return `${d}T${t}`
+  return null
 }
 
 function createPersonalEventIdentity(title?: string) {
@@ -157,6 +408,28 @@ function createPersonalEventIdentity(title?: string) {
     name: normalizedTitle || 'Event',
     email: `personal-event-${suffix}@cluster.local`,
   }
+}
+
+function mapEventCategoryToTaskCategory(category?: string) {
+  const normalized = String(category ?? '').trim().toLowerCase()
+  if (normalized === 'business') return 'work/study'
+  if (normalized === 'personal') return 'health'
+  return 'errands'
+}
+
+function buildQuickTaskMetadata(input: { title: string; note: string; category: string; location: string; startTime: Date }) {
+  const taskCategory = mapEventCategoryToTaskCategory(input.category)
+  const taskInput = [input.title, input.note, input.location].map((part) => String(part ?? '').trim()).filter(Boolean).join(' - ')
+  return buildTaskMetadataString({
+    taskCategory,
+    priority: 'medium',
+    intent: input.title || 'plan task',
+    input: taskInput || input.title || 'Task',
+    taskStatus: 'scheduled',
+    location: input.location,
+    itemType: 'task',
+    deadline: formatIsoDate(input.startTime),
+  })
 }
 
 function parseAppointmentDetails(notes?: string | null): AppointmentDetails {
@@ -169,24 +442,52 @@ function parseAppointmentDetails(notes?: string | null): AppointmentDetails {
       const record = parsed as Record<string, unknown>
       const note = typeof record.note === 'string' ? record.note : null
       const category = typeof record.category === 'string' ? record.category : null
-      if (note !== null || category !== null) {
-        return { note, category }
+      const location = typeof record.location === 'string' ? record.location : null
+      const itemType = record.itemType === 'event' || record.itemType === 'task' ? record.itemType : null
+      if (note !== null || category !== null || location !== null || itemType !== null) {
+        return { note, category, location, itemType }
       }
     }
   } catch {
-    // Fall through to legacy plain-text note handling.
+    const parts = raw.split('|').map((part) => part.trim()).filter(Boolean)
+    if (parts.length > 1) {
+      const metadata: Record<string, string> = {}
+      for (const part of parts) {
+        const index = part.indexOf(':')
+        if (index <= 0) continue
+        const key = part.slice(0, index).trim()
+        const value = part.slice(index + 1).trim()
+        if (key) metadata[key] = value
+      }
+
+      const note = metadata.note ?? metadata.Input ?? null
+      const category = metadata.category ?? metadata.TaskCategory ?? null
+      const location = metadata.location ?? metadata.Location ?? null
+      const itemType = metadata.itemType === 'event' || metadata.itemType === 'task'
+        ? metadata.itemType
+        : metadata.ItemType === 'event' || metadata.ItemType === 'task'
+          ? metadata.ItemType
+          : null
+
+      if (note !== null || category !== null || location !== null || itemType !== null) {
+        return { note, category, location, itemType }
+      }
+    }
   }
 
   return { note: raw }
 }
 
-function buildAppointmentDetails(note?: string, category?: string) {
+function buildAppointmentDetails(note?: string, category?: string, location?: string, itemType?: 'event' | 'task') {
   const payload: AppointmentDetails = {}
   const trimmedNote = String(note ?? '').trim()
   const trimmedCategory = String(category ?? '').trim()
+  const trimmedLocation = String(location ?? '').trim()
 
   if (trimmedNote) payload.note = trimmedNote
   if (trimmedCategory) payload.category = trimmedCategory
+  if (trimmedLocation) payload.location = trimmedLocation
+  if (itemType) payload.itemType = itemType
 
   return Object.keys(payload).length > 0 ? JSON.stringify(payload) : null
 }
@@ -403,6 +704,8 @@ function buildTaskMetadataString(fields: {
   input: string
   taskStatus: 'scheduled' | 'completed' | 'missed' | 'rescheduled' | 'skipped'
   deadline: string | null
+  location?: string | null
+  itemType?: 'event' | 'task' | null
 }) {
   const chunks = [
     `TaskCategory: ${fields.taskCategory}`,
@@ -412,6 +715,8 @@ function buildTaskMetadataString(fields: {
     `TaskStatus: ${fields.taskStatus}`,
   ]
 
+  if (fields.location) chunks.push(`Location: ${fields.location}`)
+  if (fields.itemType) chunks.push(`ItemType: ${fields.itemType}`)
   if (fields.deadline) chunks.push(`Deadline: ${fields.deadline}`)
   return chunks.join(' | ')
 }
@@ -421,7 +726,7 @@ function mergeTaskMetadata(note: string | null | undefined, patch: Record<string
   for (const [key, value] of Object.entries(patch)) {
     if (value) merged[key] = value
   }
-  const orderedKeys = ['TaskCategory', 'Priority', 'Intent', 'Input', 'TaskStatus', 'Deadline']
+  const orderedKeys = ['TaskCategory', 'Priority', 'Intent', 'Input', 'TaskStatus', 'Location', 'ItemType', 'Deadline']
   const parts = orderedKeys
     .filter((key) => merged[key])
     .map((key) => `${key}: ${merged[key]}`)
@@ -511,7 +816,7 @@ async function fetchBusyIntervalsInRange(
   }
 
   const eventQuery = new URLSearchParams({
-    select: 'event_time',
+    select: 'event_time,showAsBusy',
     order: 'event_time.asc',
     limit: '1000',
   })
@@ -530,9 +835,10 @@ async function fetchBusyIntervalsInRange(
     return []
   }
 
-  const rows = (await eventResponse.json()) as Array<{ event_time?: string | null }>
+  const rows = (await eventResponse.json()) as Array<{ event_time?: string | null; showAsBusy?: boolean | null }>
   return rows
     .map((row) => {
+      if (row.showAsBusy === false) return null
       const start = parseIsoOrNull(String(row.event_time ?? ''))
       if (!start) return null
       const end = new Date(start.getTime() + DEFAULT_TASK_DURATION_MINUTES * 60 * 1000)
@@ -673,6 +979,47 @@ async function updateTaskSchedule(
   return { ok: false as const, details: eventError }
 }
 
+async function updateCalendarSchedule(
+  supabaseUrl: string,
+  supabaseKey: string,
+  id: number,
+  start: Date,
+  end: Date,
+) {
+  const apptPatchResponse = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: supabaseHeaders(supabaseKey, 'return=representation'),
+    body: JSON.stringify({
+      start_time: formatIsoDate(start),
+      end_time: formatIsoDate(end),
+    }),
+  })
+
+  if (apptPatchResponse.ok) {
+    return { ok: true as const, source: 'appointments' as const }
+  }
+
+  const apptError = await apptPatchResponse.text()
+  if (!isMissingSupabaseTable(apptError, 'appointments')) {
+    return { ok: false as const, details: apptError }
+  }
+
+  const eventPatchResponse = await fetch(`${supabaseUrl}/rest/v1/events?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: supabaseHeaders(supabaseKey, 'return=representation'),
+    body: JSON.stringify({
+      event_time: formatIsoDate(start),
+    }),
+  })
+
+  if (eventPatchResponse.ok) {
+    return { ok: true as const, source: 'events' as const }
+  }
+
+  const eventError = await eventPatchResponse.text()
+  return { ok: false as const, details: eventError }
+}
+
 function inferTaskCategoryFromAppointment(row: {
   category?: string | null
   note?: string | null
@@ -760,7 +1107,7 @@ appointmentsRouter.post('/tasks', async (req: Request, res: Response) => {
     const category = mapTaskCategoryToEventCategory(parsed.category)
     const identity = createPersonalEventIdentity(eventTitle)
 
-    const legacyCreate = await insertLegacyEvent(supabaseUrl, supabaseKey, eventTitle, note, category, startDate)
+    const legacyCreate = await insertLegacyEvent(supabaseUrl, supabaseKey, eventTitle, note, text, category, startDate)
     if (legacyCreate.ok) {
       return res.status(201).json({
         success: true,
@@ -785,7 +1132,7 @@ appointmentsRouter.post('/tasks', async (req: Request, res: Response) => {
       body: JSON.stringify({
         name: identity.name,
         email: identity.email,
-        notes: buildAppointmentDetails(note, category),
+        notes: buildAppointmentDetails(note, category, undefined, 'task'),
       }),
     })
 
@@ -804,15 +1151,17 @@ appointmentsRouter.post('/tasks', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Customer creation did not return a customer record' })
     }
 
+    const apptPayload: Record<string, unknown> = {
+      customer_id: customer.id,
+      start_time: formatIsoDate(startDate),
+      status: 'scheduled',
+    }
+    if (endDate) apptPayload.end_time = formatIsoDate(endDate)
+
     const appointmentResponse = await fetch(`${supabaseUrl}/rest/v1/appointments`, {
       method: 'POST',
       headers: supabaseHeaders(supabaseKey, 'return=representation'),
-      body: JSON.stringify({
-        customer_id: customer.id,
-        start_time: formatIsoDate(startDate),
-        end_time: formatIsoDate(endDate),
-        status: 'scheduled',
-      }),
+      body: JSON.stringify(apptPayload),
     })
 
     if (!appointmentResponse.ok) {
@@ -1112,13 +1461,16 @@ async function fetchLegacyEvents(supabaseUrl: string, supabaseKey: string, limit
   const rows = (await response.json()) as SupabaseLegacyEvent[]
   const data = rows.map((row) => {
     const titleParts = parseLegacyEventTitle(row.title)
+    const details = parseAppointmentDetails(row.note ?? row.description ?? titleParts.note)
     return {
       id: row.id,
       customer_id: null,
       customer_name: titleParts.customer_name,
       customer_email: null,
-      note: row.note ?? row.description ?? titleParts.note,
+      note: details.note ?? row.note ?? row.description ?? titleParts.note,
       category: row.category ?? null,
+      location: details.location ?? null,
+      itemType: details.itemType ?? null,
       start_time: row.event_time ?? '',
       end_time: null,
       status: 'scheduled',
@@ -1132,7 +1484,8 @@ async function insertLegacyEvent(
   supabaseUrl: string,
   supabaseKey: string,
   eventTitle: string,
-  note: string,
+  detailsText: string,
+  displayNote: string,
   category: string,
   startDate: Date,
 ) {
@@ -1144,16 +1497,16 @@ async function insertLegacyEvent(
       title: eventTitle || 'Event',
       event_time: eventTime,
       category: categoryValue,
-      note: note || null,
+      note: detailsText || null,
     },
     {
       title: eventTitle || 'Event',
       event_time: eventTime,
       category: categoryValue,
-      description: note || null,
+      description: detailsText || null,
     },
     {
-      title: composeLegacyEventTitle(eventTitle, note),
+      title: composeLegacyEventTitle(eventTitle, displayNote),
       event_time: eventTime,
       category: categoryValue,
     },
@@ -1178,7 +1531,7 @@ async function insertLegacyEvent(
           customer_id: null,
           customer_name: eventTitle || 'Event',
           customer_email: null,
-          note: note || null,
+          note: detailsText || null,
           category: event.category ?? categoryValue,
           start_time: event.event_time ?? eventTime,
           end_time: null,
@@ -1210,73 +1563,86 @@ appointmentsRouter.get('/', async (req: Request, res: Response) => {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), 500)
     const nowOnly = String(req.query.upcoming ?? 'false') === 'true'
 
-    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
-    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+    let primary: any[] = []
+    let primaryFetched = false
+    let warning: string | undefined
 
-    if (hasGoogleCalendar) {
-      const googleResult = await listGoogleCalendarEvents(user.id, { limit, upcoming: nowOnly })
-      if (googleResult.ok) {
-        return res.json(googleResult.data)
+    const hasCalAi = Boolean(process.env.CAL_API_KEY)
+    if (hasCalAi) {
+      const calResult = await listCalendarEvents({ limit, upcoming: nowOnly })
+      if (calResult.ok) {
+        primary = calResult.data
+        primaryFetched = true
       }
     }
 
-    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
-    if (!supabaseUrl || !supabaseKey) {
-      return res.json({
-        data: [],
-        warning: 'Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) in .env.',
-      })
+    if (!primaryFetched) {
+      const googleResult = await listGoogleCalendarEvents(user.id, { limit, upcoming: nowOnly }).catch(() => null)
+      if (googleResult && googleResult.ok) {
+        primary = googleResult.data
+        primaryFetched = true
+      }
     }
 
-    const query = new URLSearchParams({
-      select: 'id,customer_id,start_time,end_time,status,customers(name,email,notes)',
-      order: 'start_time.asc',
-      limit: String(limit),
-    })
-
-    if (nowOnly) {
-      query.set('start_time', `gte.${new Date().toISOString()}`)
-    }
-
-    const response = await fetch(`${supabaseUrl}/rest/v1/appointments?${query.toString()}`, {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        Accept: 'application/json',
-      },
-    })
-
-    if (!response.ok) {
-      const details = await response.text()
-      if (isMissingSupabaseTable(details, 'appointments')) {
-        const legacy = await fetchLegacyEvents(supabaseUrl, supabaseKey, limit, nowOnly)
-        if (legacy.ok) return res.json(legacy.data)
-
-        return res.status(legacy.status).json({
-          error: 'Failed to fetch calendar events from Supabase',
-          details: legacy.details,
+    if (!primaryFetched) {
+      const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+      if (!supabaseUrl || !supabaseKey) {
+        warning = 'Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) in .env.'
+      } else {
+        const query = new URLSearchParams({
+          select: 'id,customer_id,start_time,end_time,status,customers(name,email,notes)',
+          order: 'start_time.asc',
+          limit: String(limit),
         })
-      }
 
-      return res.status(response.status).json({
-        error: 'Failed to fetch appointments from Supabase',
-        details,
-      })
+        if (nowOnly) {
+          query.set('start_time', `gte.${new Date().toISOString()}`)
+        }
+
+        const response = await fetch(`${supabaseUrl}/rest/v1/appointments?${query.toString()}`, {
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            Accept: 'application/json',
+          },
+        })
+
+        if (response.ok) {
+          const rows = (await response.json()) as SupabaseAppointment[]
+          primary = rows.map((row) => ({
+            id: row.id,
+            customer_id: row.customer_id,
+            customer_name: row.customers?.name ?? null,
+            customer_email: row.customers?.email ?? null,
+            ...parseAppointmentDetails(row.customers?.notes ?? null),
+            start_time: row.start_time,
+            end_time: row.end_time,
+            status: row.status,
+          }))
+          primaryFetched = true
+        } else {
+          const details = await response.text()
+          if (isMissingSupabaseTable(details, 'appointments')) {
+            const legacy = await fetchLegacyEvents(supabaseUrl, supabaseKey, limit, nowOnly)
+            if (legacy.ok && Array.isArray(legacy.data)) {
+              primary = legacy.data
+              primaryFetched = true
+            }
+          }
+        }
+      }
     }
 
-    const rows = (await response.json()) as SupabaseAppointment[]
-    const data = rows.map((row) => ({
-      id: row.id,
-      customer_id: row.customer_id,
-      customer_name: row.customers?.name ?? null,
-      customer_email: row.customers?.email ?? null,
-      ...parseAppointmentDetails(row.customers?.notes ?? null),
-      start_time: row.start_time,
-      end_time: row.end_time,
-      status: row.status,
-    }))
+    const taggedPrimary: UnifiedCalendarRecord[] = primary.map((e) => ({ ...e, source: 'google' as const }))
+    const tasks = await fetchClusterBlocks(limit, nowOnly)
 
-    return res.json(data)
+    const data: UnifiedCalendarRecord[] = [...taggedPrimary, ...tasks].sort((a, b) => {
+      const ta = new Date(a.start_time).getTime()
+      const tb = new Date(b.start_time).getTime()
+      return ta - tb
+    })
+
+    return res.json(warning ? { data, warning } : { data })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unknown error'
     return res.status(500).json({ error: 'Internal server error', details })
@@ -1352,31 +1718,60 @@ appointmentsRouter.delete('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'appointment id is required' })
     }
 
-    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
-    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+    const numericId = Number(appointmentId)
+    const isNumericId = Number.isInteger(numericId) && numericId > 0
 
-    if (hasGoogleCalendar) {
+    if (!isNumericId) {
       const googleDelete = await deleteGoogleCalendarEvent(user.id, appointmentId)
       if (googleDelete.ok) {
         return res.json({ success: true, deleted: true, id: appointmentId, source: 'google' })
       }
 
-      return res.status(googleDelete.status).json({
-        error: 'Failed to delete calendar event from Google Calendar',
-        details: googleDelete.details,
-      })
+      if (googleDelete.status !== 404) {
+        return res.status(googleDelete.status).json({
+          error: 'Failed to delete event from Google Calendar',
+          details: googleDelete.details,
+        })
+      }
     }
 
     const { supabaseUrl, supabaseKey } = getSupabaseConfig()
     if (!supabaseUrl || !supabaseKey) {
+      if (!isNumericId) {
+        const hasCalAi = Boolean(process.env.CAL_API_KEY)
+        if (hasCalAi) {
+          const calDelete = await deleteCalendarEvent(appointmentId)
+          if (calDelete.ok) {
+            return res.json({ success: true, deleted: true, id: appointmentId, source: 'cal-ai' })
+          }
+
+          return res.status(calDelete.status).json({
+            error: 'Failed to delete calendar event from Cal AI',
+            details: calDelete.details,
+          })
+        }
+      }
+
       return res.status(503).json({
         error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
       })
     }
 
-    const numericId = Number(appointmentId)
-    if (!Number.isInteger(numericId) || numericId <= 0) {
-      return res.status(400).json({ error: 'appointment id must be a positive integer' })
+    if (!isNumericId) {
+      const hasCalAi = Boolean(process.env.CAL_API_KEY)
+      if (!hasCalAi) {
+        return res.status(404).json({ error: 'Event not found' })
+      }
+
+      const calDelete = await deleteCalendarEvent(appointmentId)
+      if (calDelete.ok) {
+        return res.json({ success: true, deleted: true, id: appointmentId, source: 'cal-ai' })
+      }
+
+      return res.status(calDelete.status).json({
+        error: 'Failed to delete calendar event from Cal AI',
+        details: calDelete.details,
+      })
     }
 
     const appointmentResponse = await fetch(`${supabaseUrl}/rest/v1/appointments?id=eq.${numericId}`, {
@@ -1420,7 +1815,12 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
     const body = req.body as CreateAppointmentBody
-    const parsedFromStart = parseIsoOrNull(String(body.start_time ?? '').trim())
+    
+    // Preserve original ISO strings if they have timezone info
+    const originalStartTime = String(body.start_time ?? '').trim()
+    const hasStartTimeZone = /[Z+-]\d{2}:\d{2}$/.test(originalStartTime) || originalStartTime.endsWith('Z')
+    
+    const parsedFromStart = parseIsoOrNull(originalStartTime)
     const parsedFromDateTime = parseDateAndTimeOrNull(body.date, body.time)
     const startDate = parsedFromStart ?? parsedFromDateTime
     if (!startDate) {
@@ -1429,56 +1829,154 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
       })
     }
 
-    const endFromBody = parseIsoOrNull(String(body.end_time ?? '').trim())
-    const durationMinutes = Math.min(Math.max(Number(body.duration_minutes ?? 60), 5), 24 * 60)
-    const endDate = endFromBody ?? new Date(startDate.getTime() + durationMinutes * 60 * 1000)
+    const itemType = String(body.itemType ?? 'event').trim().toLowerCase() === 'task' ? 'task' : 'event'
 
-    if (endDate.getTime() <= startDate.getTime()) {
+    let endDate: Date | null = null
+    let originalEndTime = String(body.end_time ?? '').trim()
+    const hasEndTimeZone = /[Z+-]\d{2}:\d{2}$/.test(originalEndTime) || originalEndTime.endsWith('Z')
+
+    const endFromBody = parseIsoOrNull(originalEndTime)
+    if (endFromBody) {
+      endDate = endFromBody
+    } else if (itemType === 'event') {
+      const durationMinutes = Math.min(Math.max(Number(body.duration_minutes ?? 60), 5), 24 * 60)
+      endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000)
+    }
+
+    if (endDate && endDate.getTime() <= startDate.getTime()) {
       return res.status(400).json({ error: 'end_time must be after start_time' })
     }
 
     const eventTitle = String(body.customer_name ?? body.title ?? '').trim()
     const note = String(body.note ?? '').trim()
     const category = String(body.category ?? '').trim()
-    const endTime = formatIsoDate(endDate)
-    const startTime = formatIsoDate(startDate)
+    const location = String(body.location ?? '').trim()
+    
+    // Preserve caller-local datetime literals when provided, otherwise format from Date.
+    const localStartIso = normalizeLocalIsoDateTime(originalStartTime)
+    const startTime = hasStartTimeZone && originalStartTime
+      ? originalStartTime
+      : localStartIso
+        ? localStartIso
+        : buildLocalIsoFromDateAndTime(body.date, body.time) ?? formatIsoDate(startDate)
 
-    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
-    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+    let endTime: string | undefined
+    if (endDate) {
+      const localEndIso = normalizeLocalIsoDateTime(originalEndTime)
+      endTime = hasEndTimeZone && originalEndTime
+        ? originalEndTime
+        : localEndIso
+          ? localEndIso
+          : buildLocalIsoFromDateAndTime(body.date, originalEndTime) ?? formatIsoDate(endDate)
+    }
+    
+    const detailText = itemType === 'task'
+      ? buildQuickTaskMetadata({ title: eventTitle, note, category, location, startTime: startDate })
+      : buildAppointmentDetails(note, category, location, itemType)
 
-    if (hasGoogleCalendar) {
-      const googleCreate = await createGoogleCalendarEvent(user.id, {
-        title: eventTitle || 'Event',
-        note,
-        category,
-        startTime,
-        endTime,
-      })
+    const targetSource = String((body as { source?: unknown }).source ?? '').trim().toLowerCase()
 
-      if (googleCreate.ok) {
+    if (targetSource === 'cluster') {
+      try {
+        const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+        if (!supabaseUrl || !supabaseKey) {
+          return res.status(503).json({
+            error: 'Supabase is not configured for cluster calendar events',
+          })
+        }
+
+        const created = await writeClusterEvent({ url: supabaseUrl, key: supabaseKey }, {
+          title: eventTitle,
+          note,
+          location,
+          itemType,
+          startTime,
+          endTime: endTime ?? null,
+        })
+
+        if (!created.ok) {
+          return res.status(created.status).json({
+            error: 'Failed to create calendar event in Supabase',
+            details: created.details,
+          })
+        }
+
         return res.status(201).json({
           success: true,
-          source: 'google',
-          appointment: googleCreate.appointment,
+          source: 'cluster',
+          appointment: created.appointment,
+        })
+      } catch (err) {
+        const details = err instanceof Error ? err.message : String(err)
+        return res.status(500).json({
+          error: 'Failed to save Cluster event to Supabase',
+          details,
+        })
+      }
+    }
+
+    const hasCalAi = Boolean(process.env.CAL_API_KEY)
+
+    if (hasCalAi) {
+      const calEndTime = endTime ?? formatIsoDate(new Date(startDate.getTime() + 60 * 1000))
+      const calCreate = await createCalendarEvent({
+        title: eventTitle || 'Event',
+        note: detailText,
+        category,
+        location,
+        itemType,
+        startTime,
+        endTime: calEndTime,
+      })
+
+      if (calCreate.ok) {
+        const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+        if (supabaseUrl && supabaseKey) {
+          const mirrorResult = await insertLegacyEvent(
+            supabaseUrl,
+            supabaseKey,
+            eventTitle,
+            detailText ?? note,
+            note,
+            category,
+            startDate,
+          )
+
+          if (!mirrorResult.ok) {
+            await deleteCalendarEvent(String(calCreate.appointment.id)).catch(() => null)
+            return res.status(502).json({
+              error: 'Failed to mirror event to Supabase',
+              details: mirrorResult.details,
+            })
+          }
+        }
+
+        const appointment = calCreate.appointment
+        if (itemType === 'task' && !endDate) appointment.end_time = null
+        return res.status(201).json({
+          success: true,
+          source: 'cal-ai',
+          mirroredTo: supabaseUrl && supabaseKey ? 'supabase' : undefined,
+          appointment,
         })
       }
 
-      return res.status(googleCreate.status).json({
-        error: 'Failed to create event in Google Calendar',
-        details: googleCreate.details,
+      return res.status(calCreate.status).json({
+        error: 'Failed to create event in Cal AI',
+        details: calCreate.details,
       })
     }
 
     const { supabaseUrl, supabaseKey } = getSupabaseConfig()
     if (!supabaseUrl || !supabaseKey) {
       return res.status(503).json({
-        error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured',
+        error: 'Supabase is not configured for calendar events',
       })
     }
 
     const identity = createPersonalEventIdentity(eventTitle)
 
-    const legacyCreate = await insertLegacyEvent(supabaseUrl, supabaseKey, eventTitle, note, category, startDate)
+    const legacyCreate = await insertLegacyEvent(supabaseUrl, supabaseKey, eventTitle, detailText ?? note, note, category, startDate)
     if (legacyCreate.ok) {
       return res.status(201).json({ success: true, appointment: legacyCreate.appointment })
     }
@@ -1497,7 +1995,7 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
       body: JSON.stringify({
         name: identity.name,
         email: identity.email,
-        notes: buildAppointmentDetails(note, category),
+        notes: buildAppointmentDetails(note, category, location, itemType),
       }),
     })
 
@@ -1524,7 +2022,7 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
       body: JSON.stringify({
         customer_id: customer.id,
         start_time: formatIsoDate(startDate),
-        end_time: formatIsoDate(endDate),
+        end_time: endDate ? formatIsoDate(endDate) : null,
         status: 'scheduled',
       }),
     })
@@ -1542,17 +2040,17 @@ appointmentsRouter.post('/', async (req: Request, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      appointment: {
-        id: appointment.id,
-        customer_id: customer.id,
-        customer_name: customer.name,
-        customer_email: customer.email,
-        note: note || null,
-        category: category || null,
-        start_time: appointment.start_time,
-        end_time: appointment.end_time,
-        status: appointment.status,
-      },
+        appointment: {
+          id: appointment.id,
+          customer_id: customer.id,
+          customer_name: customer.name,
+          customer_email: customer.email,
+          note: note || null,
+          category: category || null,
+          start_time: appointment.start_time,
+          end_time: appointment.end_time,
+          status: appointment.status,
+        },
     })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unknown error'
@@ -1572,25 +2070,161 @@ appointmentsRouter.patch('/:id', async (req: Request, res: Response) => {
     const title = String(body.customer_name ?? body.title ?? '').trim()
     const note = String(body.note ?? '').trim()
     const category = String(body.category ?? '').trim()
-    const startTime = String(body.start_time ?? '').trim()
-    const endTime = String(body.end_time ?? '').trim()
+    let startTime = String(body.start_time ?? '').trim()
+    let endTime = String(body.end_time ?? '').trim()
+
+    // Only reformat if needed (12-hour time format), preserve timezone-aware ISO strings
+    if (startTime && !(/[Z+-]\d{2}:\d{2}$/.test(startTime) || startTime.endsWith('Z'))) {
+      const parsed = parseIsoOrNull(startTime)
+      if (parsed) startTime = formatIsoDate(parsed)
+    }
+    if (endTime && !(/[Z+-]\d{2}:\d{2}$/.test(endTime) || endTime.endsWith('Z'))) {
+      const parsed = parseIsoOrNull(endTime)
+      if (parsed) endTime = formatIsoDate(parsed)
+    }
 
     const hasUpdate = Boolean(title || note || category || startTime || endTime)
     if (!hasUpdate) {
       return res.status(400).json({ error: 'Provide at least one field to update' })
     }
 
-    const integrationContext = await getUserIntegrationContext(user.id).catch(() => ({ tokens: {} }))
-    const hasGoogleCalendar = Boolean(integrationContext.tokens['google_access_token'])
+    // Cluster (local Prisma) events first
+    const clusterRow = await prisma.event.findUnique({ where: { id: eventId } }).catch(() => null)
+    if (clusterRow) {
+      const updateData: Record<string, unknown> = {}
+      if (title) updateData.title = title
+      if (note) updateData.description = note
+      if (startTime) {
+        const parsed = parseIsoOrNull(startTime)
+        if (parsed) updateData.start_time = parsed
+      }
+      if (endTime) {
+        const parsed = parseIsoOrNull(endTime)
+        if (parsed) updateData.end_time = parsed
+      }
+      try {
+        const updated = await prisma.event.update({ where: { id: eventId }, data: updateData })
 
-    if (!hasGoogleCalendar) {
-      return res.status(501).json({
-        error: 'Calendar edits require a connected Google account',
-        details: 'Connect Google Calendar to enable direct event updates.',
-      })
+        if (updated.google_event_id) {
+          const googleUpdate = await updateGoogleCalendarEvent(user.id, updated.google_event_id, {
+            title: title || undefined,
+            note: note || undefined,
+            category: category || undefined,
+            startTime: startTime || undefined,
+            endTime: endTime || undefined,
+          })
+
+          if (googleUpdate.ok) {
+            return res.json({
+              success: true,
+              updated: true,
+              source: 'google',
+              appointment: googleUpdate.appointment,
+            })
+          }
+
+          return res.status(googleUpdate.status).json({
+            error: 'Failed to update event in Google Calendar',
+            details: googleUpdate.details,
+          })
+        }
+
+        return res.json({
+          success: true,
+          updated: true,
+          source: 'cluster',
+          appointment: {
+            id: updated.id,
+            customer_id: null,
+            customer_name: updated.title,
+            customer_email: null,
+            note: updated.description,
+            category: null,
+            location: updated.location,
+            itemType: updated.itemType === 'task' ? 'task' : 'event',
+            start_time: updated.start_time.toISOString(),
+            end_time: updated.end_time ? updated.end_time.toISOString() : null,
+            status: updated.status,
+            source: 'cluster',
+          },
+        })
+      } catch (err) {
+        const details = err instanceof Error ? err.message : String(err)
+        return res.status(500).json({ error: 'Failed to update Cluster event', details })
+      }
     }
 
-    const googleUpdate = await updateGoogleCalendarEvent(user.id, eventId, {
+    const { supabaseUrl, supabaseKey } = getSupabaseConfig()
+    if (eventId && !Number.isInteger(Number(eventId))) {
+      const googleUpdate = await updateGoogleCalendarEvent(user.id, eventId, {
+        title: title || undefined,
+        note: note || undefined,
+        category: category || undefined,
+        startTime: startTime || undefined,
+        endTime: endTime || undefined,
+      })
+
+      if (googleUpdate.ok) {
+        return res.json({
+          success: true,
+          updated: true,
+          source: 'google',
+          appointment: googleUpdate.appointment,
+        })
+      }
+
+      if (googleUpdate.status !== 404) {
+        return res.status(googleUpdate.status).json({
+          error: 'Failed to update event in Google Calendar',
+          details: googleUpdate.details,
+        })
+      }
+    }
+
+    if (supabaseUrl && supabaseKey) {
+      const numericId = Number(eventId)
+      if (Number.isInteger(numericId) && numericId > 0) {
+        const parsedStart = startTime ? parseIsoOrNull(startTime) : null
+        const parsedEnd = endTime ? parseIsoOrNull(endTime) : null
+        if (parsedStart && parsedEnd) {
+          const calendarUpdate = await updateCalendarSchedule(supabaseUrl, supabaseKey, numericId, parsedStart, parsedEnd)
+          if (calendarUpdate.ok) {
+            return res.json({
+              success: true,
+              updated: true,
+              source: 'google',
+              appointment: {
+                id: numericId,
+                customer_id: null,
+                customer_name: title || 'Event',
+                customer_email: null,
+                note: note || null,
+                category: category || null,
+                location: null,
+                itemType: 'event',
+                start_time: parsedStart.toISOString(),
+                end_time: parsedEnd.toISOString(),
+                status: 'scheduled',
+                source: 'google',
+              },
+            })
+          }
+
+          return res.status(500).json({
+            error: 'Failed to update appointment in Supabase',
+            details: calendarUpdate.details,
+          })
+        }
+      }
+    }
+
+    const hasCalAi = Boolean(process.env.CAL_API_KEY)
+
+    if (!hasCalAi) {
+      return res.status(404).json({ error: 'Event not found' })
+    }
+
+    const calUpdate = await updateCalendarEvent(eventId, {
       title: title || undefined,
       note: note || undefined,
       category: category || undefined,
@@ -1598,18 +2232,18 @@ appointmentsRouter.patch('/:id', async (req: Request, res: Response) => {
       endTime: endTime || undefined,
     })
 
-    if (!googleUpdate.ok) {
-      return res.status(googleUpdate.status).json({
-        error: 'Failed to update event in Google Calendar',
-        details: googleUpdate.details,
+    if (!calUpdate.ok) {
+      return res.status(calUpdate.status).json({
+        error: 'Failed to update event in Cal AI',
+        details: calUpdate.details,
       })
     }
 
     return res.json({
       success: true,
       updated: true,
-      source: 'google',
-      appointment: googleUpdate.appointment,
+      source: 'cal-ai',
+      appointment: calUpdate.appointment,
     })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unknown error'

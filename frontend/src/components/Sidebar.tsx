@@ -8,10 +8,11 @@ import { api, Agent } from '@/lib/api'
 const SIDEBAR_AGENT_ORDER_KEY = 'sidebarAgentOrder'
 const SIDEBAR_NAV_ORDER_KEY = 'sidebarNavOrder'
 const SIDEBAR_CHATS_EXPANDED_KEY = 'sidebarChatsExpanded'
+const SIDEBAR_COLLAPSED_KEY = 'clusterSidebarCollapsed'
 
 const AGENT_COLORS = [
-  '#6366f1', '#22c55e', '#f59e0b', '#ec4899',
-  '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4',
+  'var(--agent-1)', 'var(--agent-2)', 'var(--agent-3)', 'var(--agent-4)',
+  'var(--agent-5)', 'var(--agent-6)', 'var(--agent-7)', 'var(--agent-8)',
 ]
 
 function getColor(index: number): string {
@@ -105,10 +106,51 @@ function CalendarIcon({ className }: { className?: string }) {
   )
 }
 
+function TimelineIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2 4.5H14M2 8H10M2 11.5H12" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+      <circle cx="11.5" cy="8" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+    </svg>
+  )
+}
+
+function GoalIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="8" cy="8" r="5.75" stroke="currentColor" strokeWidth="1.25" />
+      <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.25" />
+      <circle cx="8" cy="8" r="0.75" fill="currentColor" />
+    </svg>
+  )
+}
+
+function TaskIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.25" />
+      <path d="M5 5.25H11M5 8H11M5 10.75H8" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function HabitIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 8.5L6 11.5L13 4.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2.5 3.5H13.5V12.5H2.5V3.5Z" stroke="currentColor" strokeWidth="1.25" />
+    </svg>
+  )
+}
+
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', Icon: HomeIcon },
   { href: '/calendar', label: 'Calendar', Icon: CalendarIcon },
-  { href: '/', label: 'Chat', Icon: ChatIcon },
+  { href: '/due-dates', label: 'Due Dates', Icon: TimelineIcon },
+  { href: '/habits', label: 'Habits', Icon: HabitIcon },
+  { href: '/goals', label: 'Goals', Icon: GoalIcon },
+  { href: '/tasks', label: 'Tasks', Icon: TaskIcon },
+  { href: '/chat', label: 'Chat', Icon: ChatIcon },
   { href: '/groupchats', label: 'Group Chats', Icon: ChatIcon },
   { href: '/workflows', label: 'Workflows', Icon: WorkflowIcon },
   { href: '/scheduler', label: 'Automations', Icon: ClockIcon },
@@ -129,6 +171,14 @@ export function Sidebar() {
   const [draggingNavHref, setDraggingNavHref] = useState<string | null>(null)
   const [dragOverNavHref, setDragOverNavHref] = useState<string | null>(null)
   const [chatsExpanded, setChatsExpanded] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
 
   function sortNavBySavedOrder(list: typeof NAV_ITEMS): typeof NAV_ITEMS {
     try {
@@ -204,6 +254,15 @@ export function Sidebar() {
   useEffect(() => {
     localStorage.setItem(SIDEBAR_CHATS_EXPANDED_KEY, String(chatsExpanded))
   }, [chatsExpanded])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('cluster-sidebar-collapsed', sidebarCollapsed)
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed))
+    } catch {
+      // Ignore persistence errors.
+    }
+  }, [sidebarCollapsed])
 
   function handleNavDragStart(href: string) {
     setDraggingNavHref(href)
@@ -321,18 +380,60 @@ export function Sidebar() {
 
   return (
     <div
-      className="shrink-0 h-full flex flex-col"
+      className="cluster-sidebar-shell shrink-0 h-full flex flex-col"
       style={{
         width: '220px',
-        backgroundColor: 'var(--bg-secondary)',
-        borderRight: '0.5px solid var(--border)',
-      }}
+        backgroundColor: 'var(--sidebar-bg)',
+        borderRight: '1px solid var(--border)',
+        // Override theme variables locally to create a light, elevated sidebar
+        '--sidebar-bg': '#ffffff',
+        '--text-primary': '#071018',
+        '--text-secondary': '#475569',
+        '--text-tertiary': '#6b7280',
+        '--border': '#e6e6e6',
+        '--accent': '#0d9488',
+        '--bg-hover': '#f3f4f6',
+      } as any}
     >
       {/* Brand */}
       <div
         className="px-4 h-14 flex items-center gap-2.5 shrink-0"
-        style={{ borderBottom: '0.5px solid var(--border)' }}
+        style={{ borderBottom: '1px solid var(--border)' }}
       >
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          className="cluster-sidebar-collapse-btn"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '24px',
+            height: '24px',
+            border: 'none',
+            background: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-secondary)',
+            padding: 0,
+            flexShrink: 0,
+          }}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <span
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              width: '18px',
+              height: '12px',
+            }}
+          >
+            <span style={{ width: '100%', height: '2px', backgroundColor: 'currentColor', borderRadius: '1px' }} />
+            <span style={{ width: '100%', height: '2px', backgroundColor: 'currentColor', borderRadius: '1px' }} />
+            <span style={{ width: '100%', height: '2px', backgroundColor: 'currentColor', borderRadius: '1px' }} />
+          </span>
+        </button>
         <div
           style={{
             width: '20px',
@@ -342,7 +443,7 @@ export function Sidebar() {
             flexShrink: 0,
           }}
         />
-        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+        <p className="cluster-sidebar-brand font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
           Cluster
         </p>
       </div>
@@ -364,13 +465,13 @@ export function Sidebar() {
               }}
               onDrop={handleNavDrop}
               onDragEnd={handleNavDragEnd}
-              className={`rounded-lg transition-all ${isDragging ? 'opacity-60 scale-[1.01]' : ''} ${isDropTarget ? 'ring-1 ring-white/25 bg-white/5' : ''}`}
+              className={`rounded-lg transition-transform transition-opacity ${isDragging ? 'opacity-60 scale-[1.01]' : ''} ${isDropTarget ? 'ring-1 ring-[var(--border-strong)] bg-[var(--bg-hover)]' : ''}`}
             >
               <Link
                 href={href}
                 className="flex items-center gap-2.5 py-2 rounded-lg text-sm transition-colors"
                 style={{
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
                   backgroundColor: 'transparent',
                   fontWeight: isActive ? 500 : 400,
                   borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
@@ -384,7 +485,7 @@ export function Sidebar() {
                 }}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                {label}
+                <span className="cluster-sidebar-label">{label}</span>
               </Link>
             </div>
           )
@@ -405,7 +506,7 @@ export function Sidebar() {
             <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>
               Chats
             </span>
-            <span className={`text-white/35 text-[10px] transition-transform ${chatsExpanded ? 'rotate-180' : ''}`}>
+            <span className={`text-[10px] transition-transform`} style={{ color: 'var(--text-tertiary)' }}>
               ▼
             </span>
           </button>
@@ -429,14 +530,14 @@ export function Sidebar() {
                 }}
                 onDrop={handleAgentDrop}
                 onDragEnd={handleAgentDragEnd}
-                className={`rounded-lg mb-0.5 transition-all ${isDragging ? 'opacity-60 scale-[1.01]' : ''} ${isDropTarget ? 'ring-1 ring-white/25 bg-white/5' : ''}`}
+                className={`rounded-lg mb-0.5 transition-transform transition-opacity ${isDragging ? 'opacity-60 scale-[1.01]' : ''} ${isDropTarget ? 'ring-1 ring-[var(--border-strong)] bg-[var(--bg-hover)]' : ''}`}
               >
                 <Link
                   href={`/agents/${agent.id}`}
                   className="flex items-center gap-2.5 py-1.5 rounded-lg text-xs truncate transition-colors"
                   style={{
                     color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    backgroundColor: isSelected ? 'rgba(239,68,68,0.14)' : 'transparent',
+                    backgroundColor: isSelected ? 'var(--danger-soft)' : 'transparent',
                     borderLeft: isActive && !isSelected ? '3px solid var(--accent)' : '3px solid transparent',
                     paddingLeft: '7px',
                   }}
@@ -450,15 +551,15 @@ export function Sidebar() {
                     if (!isActive && !isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = isSelected ? 'rgba(239,68,68,0.14)' : 'transparent'
+                    e.currentTarget.style.backgroundColor = isSelected ? 'var(--danger-soft)' : 'transparent'
                   }}
                 >
                   {deleteMode ? (
                     <span
                       className="shrink-0 w-3.5 h-3.5 rounded border"
                       style={{
-                        borderColor: isSelected ? 'rgba(239,68,68,0.8)' : 'rgba(255,255,255,0.25)',
-                        backgroundColor: isSelected ? 'rgba(239,68,68,0.8)' : 'transparent',
+                        borderColor: isSelected ? 'var(--danger)' : 'var(--border-strong)',
+                        backgroundColor: isSelected ? 'var(--danger)' : 'transparent',
                         display: 'inline-block',
                       }}
                     />
@@ -472,7 +573,7 @@ export function Sidebar() {
                       display: 'inline-block',
                     }}
                   />
-                  {agent.name}
+                  <span className="cluster-sidebar-chat-label">{agent.name}</span>
                 </Link>
               </div>
             )
@@ -511,12 +612,12 @@ export function Sidebar() {
             className="w-7 h-7 rounded-md border flex items-center justify-center shrink-0 transition-colors"
             style={{
               borderColor: isBinDragOver
-                ? 'rgba(239,68,68,0.85)'
-                : (deleteMode ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.18)'),
+                ? 'var(--danger)'
+                : (deleteMode ? 'var(--danger-border)' : 'var(--border-strong)'),
               backgroundColor: isBinDragOver
-                ? 'rgba(239,68,68,0.18)'
-                : (deleteMode ? 'rgba(239,68,68,0.12)' : 'transparent'),
-              color: deleteMode ? 'rgba(252,165,165,1)' : 'rgba(255,255,255,0.45)',
+                ? 'var(--danger-soft)'
+                : (deleteMode ? 'var(--danger-soft)' : 'transparent'),
+              color: deleteMode ? 'var(--danger)' : 'var(--text-tertiary)',
             }}
             title={
               deleteMode
@@ -542,20 +643,41 @@ export function Sidebar() {
         </div>
       </div>
 
+
       {/* Hire Agent CTA */}
+      {/* User / account section (bottom) */}
       <div
         className="p-3 shrink-0"
-        style={{ borderTop: '0.5px solid var(--border)' }}
+        style={{ borderTop: '1px solid var(--border)' }}
       >
-        <Link
-          href="/agents/new"
-          className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-medium transition-colors"
-          style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent-hover)')}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent)')}
-        >
-          + Hire Agent
-        </Link>
+        <div className="flex items-center gap-3">
+          <div
+            style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: '#eef2ff', flexShrink: 0 }}
+            aria-hidden
+          />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>You</div>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>you@company.com</div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              className="cluster-sidebar-icon-btn"
+              onClick={() => alert('Open account')}
+              title="Account"
+            >
+              ⚙
+            </button>
+            <button
+              type="button"
+              className="cluster-sidebar-icon-btn"
+              onClick={() => alert('Sign out')}
+              title="Sign out"
+            >
+              ⎋
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -5,7 +5,9 @@ import { getUserIntegrationContext } from '../lib/integrationContext'
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 export const DAILY_RUN_LIMIT = 10
 
-const jobs = new Map<string, cron.ScheduledTask>()
+type ScheduledTask = ReturnType<typeof cron.schedule>
+
+const jobs = new Map<string, ScheduledTask>()
 
 // ─── Daily run counter ────────────────────────────────────────────────────────
 

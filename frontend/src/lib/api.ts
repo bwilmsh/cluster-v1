@@ -5,7 +5,7 @@ export function safeArray<T>(data: unknown): T[] {
   if (Array.isArray(data)) return data as T[]
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>
-    for (const key of ['data', 'items', 'results', 'tasks', 'agents', 'widgets', 'messages', 'credentials', 'chats', 'members', 'activities', 'goals']) {
+    for (const key of ['data', 'items', 'results', 'tasks', 'agents', 'widgets', 'messages', 'credentials', 'chats', 'members', 'activities', 'goals', 'scheduledEmails']) {
       if (Array.isArray(d[key])) return d[key] as T[]
     }
   }
@@ -76,13 +76,96 @@ export interface Widget {
 }
 
 export interface Goal {
-  id: number
-  user_id: number | null
-  goal_text: string | null
+  id: string
+  user_id: string | null
+  goal_text: string
+  deadline: string | null
   is_active: boolean
   visible_agent_ids: string[]
-  created_at: string | null
-  updated_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface GoalPlanTask {
+  title: string
+  due_date: string | null
+  priority: string | null
+  status: string | null
+  note: string | null
+}
+
+export interface GoalPlanCalendarBlock {
+  title: string
+  start_time: string | null
+  end_time: string | null
+  note: string | null
+}
+
+export interface GoalPlanResponse {
+  success: boolean
+  reply: string
+  check_in_prompt: string
+  schedule_summary: string
+  tasks: GoalPlanTask[]
+  calendar_blocks: GoalPlanCalendarBlock[]
+}
+
+export type DueDatePriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+export type DueDateStatus = 'PENDING' | 'COMPLETED' | 'OVERDUE'
+export type DueDateCategory = 'ASSIGNMENT' | 'EXAM' | 'WORK' | 'PERSONAL'
+
+export interface DueDateItem {
+  id: string
+  title: string
+  description: string | null
+  dueDate: string
+  dueTime: string
+  dueAt: string
+  priority: DueDatePriority
+  status: DueDateStatus
+  category: DueDateCategory
+  createdAt: string
+}
+
+export interface AutoRunConfig {
+  id: string
+  eventId?: string | null
+  goalId?: string | null
+  enabled: boolean
+  actionType: 'sendEmail' | 'createCalendarEvent' | 'markTaskComplete' | 'sendNotification'
+  config: Record<string, any>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DueDatesResponse {
+  data: DueDateItem[]
+  warning?: string
+}
+
+export interface ScheduledEmail {
+  id: string
+  userId: string
+  to: string
+  subject: string
+  body: string
+  sendAt: string
+  status: 'scheduled' | 'sending' | 'sent' | 'failed'
+  sentAt: string | null
+  gmailMessageId: string | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface GoogleIntegrationStatus {
+  connected: boolean
+  integration: {
+    provider: string
+    accountEmail?: string | null
+    accountName?: string | null
+    expiresAt?: string | null
+  } | null
 }
 
 export const api = {
@@ -90,25 +173,52 @@ export const api = {
     list: (): Promise<Agent[]> =>
       fetch(`${BASE}/agents`).then((r) => r.json()).then((d) => safeArray<Agent>(d)),
 
-    create: (name: string): Promise<Agent> =>
-      fetch(`${BASE}/agents`, {
+    create: async (name: string): Promise<Agent> => {
+      const r = await fetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
-      }).then((r) => r.json()),
+      })
+      if (!r.ok) {
+        const text = await r.text().catch(() => '')
+        throw new Error(`Create agent failed (${r.status}): ${text || r.statusText}`)
+      }
+      return r.json()
+    },
 
-    update: (id: string, data: Partial<Pick<Agent, 'setupAnswers' | 'memory' | 'status'>>) =>
-      fetch(`${BASE}/agents/${id}`, {
+    update: async (id: string, data: Partial<Pick<Agent, 'setupAnswers' | 'memory' | 'status'>>) => {
+      const r = await fetch(`${BASE}/agents/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then((r) => r.json()),
+      })
+      if (!r.ok) {
+        const text = await r.text().catch(() => '')
+        throw new Error(`Update agent failed (${r.status}): ${text || r.statusText}`)
+      }
+      return r.json()
+    },
 
     delete: (id: string): Promise<void> =>
       fetch(`${BASE}/agents/${id}`, { method: 'DELETE' }).then(() => undefined),
 
-    messages: (id: string): Promise<Message[]> =>
-      fetch(`${BASE}/agents/${id}/messages`).then((r) => r.json()).then((d) => safeArray<Message>(d)),
+    messages: (id: string): Promise<Message[]> => {
+      console.log('[API] Fetching messages for agent:', id)
+      return fetch(`${BASE}/agents/${id}/messages`)
+        .then((r) => {
+          console.log('[API] Messages response status:', r.status)
+          return r.json()
+        })
+        .then((d) => {
+          const msgs = safeArray<Message>(d)
+          console.log('[API] Received', msgs.length, 'messages:', msgs.map((m) => ({ role: m.role, len: m.content.length })))
+          return msgs
+        })
+        .catch((err) => {
+          console.error('[API] Failed to fetch messages:', err)
+          throw err
+        })
+    },
 
     files: (id: string): Promise<AgentFile[]> =>
       fetch(`${BASE}/agents/${id}/files`).then((r) => r.json()).then((d) => safeArray<AgentFile>(d)),
@@ -262,6 +372,61 @@ export const api = {
         .then((r) => r.json())
         .then((d) => safeArray<Goal>(d)),
 
+    get: (id: string): Promise<Goal> =>
+      fetch(`${BASE}/goals/${encodeURIComponent(id)}`)
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}))
+          if (!r.ok) {
+            throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to load goal')
+          }
+          return data
+        })
+        .then((d) => {
+          if (d && typeof d === 'object' && 'data' in d) {
+            return (d as { data: Goal }).data
+          }
+          return d as Goal
+        }),
+
+    create: (goalText: string, deadline?: string | null, visibleAgentIds: string[] = []): Promise<{ success: boolean; created: Goal }> =>
+      fetch(`${BASE}/goals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal_text: goalText, deadline: deadline ?? null, visible_agent_ids: visibleAgentIds }),
+      }).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to create goal')
+        }
+        return data
+      }),
+
+    update: (id: string, updates: { goal_text?: string; deadline?: string | null }): Promise<{ success: boolean; goal: Goal }> =>
+      fetch(`${BASE}/goals/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      }).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to update goal')
+        }
+        return data
+      }),
+
+    plan: (id: string, payload: { message: string; history?: Array<{ role: string; content: string }> }): Promise<GoalPlanResponse> =>
+      fetch(`${BASE}/goals/${encodeURIComponent(id)}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to plan goal')
+        }
+        return data as GoalPlanResponse
+      }),
+
     current: (): Promise<Goal | null> =>
       fetch(`${BASE}/goals/current`)
         .then((r) => {
@@ -296,6 +461,158 @@ export const api = {
           throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to clear goal')
         }
         return data
+      }),
+  },
+
+  dueDates: {
+    list: (): Promise<DueDatesResponse> =>
+      fetch(`${BASE}/due-dates`).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to load due dates')
+        }
+        return {
+          data: safeArray<DueDateItem>(data),
+          warning: typeof data?.warning === 'string' ? data.warning : undefined,
+        }
+      }),
+
+    create: async (data: { title: string; description?: string | null; dueDate: string; dueTime: string; priority: DueDatePriority; category: DueDateCategory }): Promise<DueDateItem> => {
+      const r = await fetch(`${BASE}/due-dates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: data.title,
+          description: data.description ?? null,
+          dueDate: data.dueDate,
+          dueTime: data.dueTime,
+          priority: data.priority,
+          category: data.category,
+        }),
+      })
+
+      const payload = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to create due date')
+      }
+
+      return payload as DueDateItem
+    },
+
+    update: async (id: string, data: Partial<Omit<DueDateItem, 'id' | 'createdAt' | 'dueAt'>> & { dueDate?: string }): Promise<DueDateItem> => {
+      const r = await fetch(`${BASE}/due-dates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+
+      const payload = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to update due date')
+      }
+
+      return payload as DueDateItem
+    },
+
+    complete: async (id: string): Promise<void> => {
+      const r = await fetch(`${BASE}/due-dates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      })
+
+      const payload = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to complete due date')
+      }
+    },
+
+    delete: async (id: string): Promise<void> => {
+      const r = await fetch(`${BASE}/due-dates/${id}`, {
+        method: 'DELETE',
+      })
+
+      const payload = await r.json().catch(() => ({}))
+      if (!r.ok && r.status !== 204) {
+        throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to delete due date')
+      }
+    },
+
+    getAutoRun: async (itemId: string): Promise<AutoRunConfig> => {
+      const r = await fetch(`${BASE}/due-dates/${itemId}/auto-run`)
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to load auto run config')
+      }
+      return data
+    },
+
+    setAutoRun: async (itemId: string, itemType: 'task' | 'goal', enabled: boolean, actionType: string, config: Record<string, any> = {}): Promise<AutoRunConfig> => {
+      const r = await fetch(`${BASE}/due-dates/${itemId}/auto-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemType, enabled, actionType, config }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to save auto run config')
+      }
+      return data
+    },
+
+    deleteAutoRun: async (itemId: string): Promise<{ success: boolean; deletedCount: number }> => {
+      const r = await fetch(`${BASE}/due-dates/${itemId}/auto-run`, { method: 'DELETE' })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to delete auto run config')
+      }
+      return data
+    },
+  },
+
+  scheduledEmails: {
+    list: (): Promise<ScheduledEmail[]> =>
+      fetch(`${BASE}/scheduled-emails`).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to load scheduled emails')
+        }
+        return safeArray<ScheduledEmail>(data)
+      }),
+
+    create: (data: { to: string; subject: string; body: string; sendAt: string }): Promise<ScheduledEmail> =>
+      fetch(`${BASE}/scheduled-emails`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then(async (r) => {
+        const payload = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to save scheduled email')
+        }
+        return payload as ScheduledEmail
+      }),
+
+    delete: (id: string): Promise<void> =>
+      fetch(`${BASE}/scheduled-emails/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(async (r) => {
+        if (!r.ok && r.status !== 204) {
+          const payload = await r.json().catch(() => ({}))
+          throw new Error(typeof payload?.details === 'string' ? payload.details : payload?.error ?? 'Failed to delete scheduled email')
+        }
+      }),
+  },
+
+  oauth: {
+    googleStatus: (): Promise<GoogleIntegrationStatus> =>
+      fetch(`${BASE}/oauth/google/status`).then(async (r) => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          throw new Error(typeof data?.details === 'string' ? data.details : data?.error ?? 'Failed to load Google status')
+        }
+        return {
+          connected: Boolean(data?.connected),
+          integration: data?.integration ?? null,
+        }
       }),
   },
 

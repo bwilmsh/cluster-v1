@@ -85,25 +85,27 @@ export default function WorkflowsPage() {
           </div>
         ) : workflows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-2"
-              style={{ backgroundColor: 'var(--bg-tertiary)' }}
-            >
-              <svg className="w-6 h-6" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--text-tertiary)' }}>
-                <circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <circle cx="13" cy="8" r="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <circle cx="3" cy="13" r="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <path d="M4.5 3.5L11.5 7M4.5 12.5L11.5 8.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-              </svg>
+            <div className="glass animate-fade-slide-up rounded-3xl px-10 py-12 flex flex-col items-center gap-4 max-w-sm">
+              <div
+                className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                style={{ background: 'var(--glow-teal)', border: '1px solid var(--glass-border)' }}
+              >
+                <svg className="w-6 h-6" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--accent)' }}>
+                  <circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                  <circle cx="13" cy="8" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                  <circle cx="3" cy="13" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                  <path d="M4.5 3.5L11.5 7M4.5 12.5L11.5 8.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>No workflows yet</p>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+                Ask any agent to set up a workflow for you — try{' '}
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  "Set me a reminder for Sunday"
+                </span>
+                {' '}and it will build one.
+              </p>
             </div>
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No workflows yet</p>
-            <p className="text-xs max-w-xs leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
-              Ask any agent to set up a workflow for you. Say something like{' '}
-              <span style={{ color: 'var(--text-secondary)' }}>
-                "Set me a reminder for my hair appointment Sunday"
-              </span>{' '}
-              and the agent will build it.
-            </p>
           </div>
         ) : (
           <div className="max-w-2xl space-y-3">
@@ -111,13 +113,7 @@ export default function WorkflowsPage() {
               <div
                 key={wf.id}
                 onClick={() => router.push(`/workflows/${wf.id}`)}
-                className="rounded-2xl p-4 cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: 'var(--bg-secondary)',
-                  border: '0.5px solid var(--border)',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--border-strong)')}
-                onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                className="glass workflow-card rounded-2xl p-4 cursor-pointer"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">

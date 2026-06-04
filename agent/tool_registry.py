@@ -73,7 +73,7 @@ class ToolRegistry:
             )
 
     def get_tool_definitions(self, environment: ToolEnvironment | None = None) -> list[dict[str, Any]]:
-        """Return Claude tool definitions, filtered by environment availability."""
+        """Return tool definitions, filtered by environment availability."""
 
         environment = environment or {}
         definitions: list[dict[str, Any]] = []

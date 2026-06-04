@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '@/lib/api'
@@ -11,18 +11,29 @@ export default function NewAgentPage() {
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
   const [setupAgent, setSetupAgent] = useState<{ id: string; name: string } | null>(null)
+  const createdAgentIdRef = useRef<string | null>(null)
+  const [createError, setCreateError] = useState('')
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
     setCreating(true)
-    const agent = await api.agents.create(name.trim())
-    setSetupAgent({ id: agent.id, name: agent.name })
-    setCreating(false)
+    setCreateError('')
+    try {
+      const agent = await api.agents.create(name.trim())
+      createdAgentIdRef.current = agent.id
+      setSetupAgent({ id: agent.id, name: agent.name })
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Failed to create agent')
+    } finally {
+      setCreating(false)
+    }
   }
 
-  function handleSetupComplete() {
-    router.push(`/agents/${setupAgent!.id}`)
+  function handleSetupComplete(agentId: string) {
+    const targetAgentId = agentId || createdAgentIdRef.current || setupAgent?.id
+    if (!targetAgentId) return
+    router.push(`/agents/${targetAgentId}`)
   }
 
   return (
@@ -36,6 +47,12 @@ export default function NewAgentPage() {
       <div className="max-w-md">
         <h1 className="text-2xl font-semibold text-white mb-2">Hire an Agent</h1>
         <p className="text-white/40 text-sm mb-8">Name your agent, then pick a personality.</p>
+
+        {createError && (
+          <p className="mb-4 text-sm text-red-300">
+            {createError}
+          </p>
+        )}
 
         <form onSubmit={handleCreate} className="space-y-5">
           {/* Agent Name */}

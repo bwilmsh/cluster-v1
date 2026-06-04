@@ -7,9 +7,12 @@ export type CalendarEventRecord = {
   customer_email: string | null
   note?: string | null
   category?: string | null
+  location?: string | null
+  itemType?: 'event' | 'task' | null
   start_time: string
   end_time: string | null
   status: string
+  allDay: boolean
 }
 
 type GoogleCalendarDateField = {
@@ -21,6 +24,7 @@ type GoogleCalendarEvent = {
   id: string
   summary?: string | null
   description?: string | null
+  location?: string | null
   status?: string | null
   start?: GoogleCalendarDateField | null
   end?: GoogleCalendarDateField | null
@@ -29,19 +33,29 @@ type GoogleCalendarEvent = {
 type ParsedEventDetails = {
   note: string | null
   category: string | null
+  location: string | null
+  itemType: 'event' | 'task' | null
 }
 
 type GoogleEventWindow = {
   limit: number
   upcoming: boolean
+  timeMin?: string
+  timeMax?: string
 }
 
 type GoogleEventWriteInput = {
   title: string
   startTime: string
-  endTime: string
+  endTime?: string | null
   note?: string | null
   category?: string | null
+  location?: string | null
+  itemType?: 'event' | 'task'
+}
+
+function getGoogleCalendarTimeZone() {
+  return process.env.GOOGLE_CALENDAR_TIMEZONE || process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
 function getGoogleCalendarBaseUrl() {
@@ -56,44 +70,93 @@ async function getGoogleAccessToken(userId: string): Promise<string | null> {
 
 function parseEventDetails(description?: string | null): ParsedEventDetails {
   const raw = String(description ?? '').trim()
-  if (!raw) return { note: null, category: null }
+  if (!raw) return { note: null, category: null, location: null, itemType: null }
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const note = typeof parsed.note === 'string' ? parsed.note : null
     const category = typeof parsed.category === 'string' ? parsed.category : null
-    if (note !== null || category !== null) {
-      return { note, category }
+    const location = typeof parsed.location === 'string' ? parsed.location : null
+    const itemType = parsed.itemType === 'event' || parsed.itemType === 'task' ? parsed.itemType : null
+    if (note !== null || category !== null || location !== null || itemType !== null) {
+      return { note, category, location, itemType }
     }
   } catch {
-    // Fall back to plain text notes.
+    const parts = raw.split('|').map((part) => part.trim()).filter(Boolean)
+    if (parts.length > 1) {
+      const record: Record<string, string> = {}
+      for (const part of parts) {
+        const index = part.indexOf(':')
+        if (index <= 0) continue
+        const key = part.slice(0, index).trim()
+        const value = part.slice(index + 1).trim()
+        if (key) record[key] = value
+      }
+
+      const note = record.note ?? record.Input ?? null
+      const category = record.category ?? record.TaskCategory ?? null
+      const location = record.location ?? record.Location ?? null
+      const itemType = record.itemType === 'event' || record.itemType === 'task'
+        ? record.itemType
+        : record.ItemType === 'event' || record.ItemType === 'task'
+          ? record.ItemType
+          : null
+
+      if (note !== null || category !== null || location !== null || itemType !== null) {
+        return {
+          note,
+          category,
+          location,
+          itemType,
+        }
+      }
+    }
   }
 
-  return { note: raw, category: null }
+  return { note: raw, category: null, location: null, itemType: null }
 }
 
-function buildEventDescription(note?: string | null, category?: string | null) {
+function buildEventDescription(note?: string | null, category?: string | null, location?: string | null, itemType?: 'event' | 'task') {
   const payload: Record<string, string> = {}
   const trimmedNote = String(note ?? '').trim()
   const trimmedCategory = String(category ?? '').trim()
+  const trimmedLocation = String(location ?? '').trim()
 
   if (trimmedNote) payload.note = trimmedNote
   if (trimmedCategory) payload.category = trimmedCategory
+  if (trimmedLocation) payload.location = trimmedLocation
+  if (itemType) payload.itemType = itemType
 
   return Object.keys(payload).length > 0 ? JSON.stringify(payload) : ''
 }
 
 function normalizeGoogleDateField(field?: GoogleCalendarDateField | null) {
-  if (!field) return null
-  const iso = field.dateTime ?? (field.date ? `${field.date}T00:00:00` : null)
-  if (!iso) return null
-  const parsed = new Date(iso)
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  if (!field) return { iso: null, allDay: false }
+
+  if (field.dateTime) {
+    const parsed = new Date(field.dateTime)
+    return {
+      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
+      allDay: false,
+    }
+  }
+
+  if (field.date) {
+    const parsed = new Date(`${field.date}T00:00:00`)
+    return {
+      iso: Number.isNaN(parsed.getTime()) ? null : parsed.toISOString(),
+      allDay: true,
+    }
+  }
+
+  return { iso: null, allDay: false }
 }
 
 function eventToRecord(event: GoogleCalendarEvent): CalendarEventRecord | null {
-  const startTime = normalizeGoogleDateField(event.start)
-  const endTime = normalizeGoogleDateField(event.end)
+  const startField = normalizeGoogleDateField(event.start)
+  const endField = normalizeGoogleDateField(event.end)
+  const startTime = startField.iso
+  const endTime = endField.iso
   if (!startTime) return null
 
   const details = parseEventDetails(event.description ?? null)
@@ -104,9 +167,12 @@ function eventToRecord(event: GoogleCalendarEvent): CalendarEventRecord | null {
     customer_email: null,
     note: details.note,
     category: details.category,
+    location: event.location?.trim() || details.location,
+    itemType: details.itemType,
     start_time: startTime,
     end_time: endTime,
     status: event.status ?? 'confirmed',
+    allDay: startField.allDay || endField.allDay,
   }
 }
 
@@ -144,8 +210,14 @@ export async function listGoogleCalendarEvents(userId: string, window: GoogleEve
     showDeleted: 'false',
   })
 
-  if (window.upcoming) {
+  if (window.timeMin) {
+    params.set('timeMin', window.timeMin)
+  } else if (window.upcoming) {
     params.set('timeMin', new Date().toISOString())
+  }
+
+  if (window.timeMax) {
+    params.set('timeMax', window.timeMax)
   }
 
   const response = await googleCalendarRequest(userId, `calendars/primary/events?${params.toString()}`)
@@ -175,14 +247,21 @@ export async function createGoogleCalendarEvent(
   status: number
   details: string
 }> {
+  const timeZone = getGoogleCalendarTimeZone()
+  const body: Record<string, unknown> = {
+    summary: input.title,
+    description: buildEventDescription(input.note ?? null, input.category ?? null, input.location ?? null, input.itemType ?? null),
+    location: String(input.location ?? '').trim() || undefined,
+    start: { dateTime: input.startTime, timeZone },
+  }
+
+  if (input.endTime) {
+    body.end = { dateTime: input.endTime, timeZone }
+  }
+
   const response = await googleCalendarRequest(userId, 'calendars/primary/events', {
     method: 'POST',
-    body: JSON.stringify({
-      summary: input.title,
-      description: buildEventDescription(input.note ?? null, input.category ?? null),
-      start: { dateTime: input.startTime },
-      end: { dateTime: input.endTime },
-    }),
+    body: JSON.stringify(body),
   })
 
   if (!response) {
@@ -215,13 +294,15 @@ export async function updateGoogleCalendarEvent(
   status: number
   details: string
 }> {
+  const timeZone = getGoogleCalendarTimeZone()
   const body: Record<string, unknown> = {}
   if (input.title !== undefined) body.summary = input.title
   if (input.note !== undefined || input.category !== undefined) {
-    body.description = buildEventDescription(input.note ?? null, input.category ?? null)
+    body.description = buildEventDescription(input.note ?? null, input.category ?? null, input.location ?? null, input.itemType ?? null)
   }
-  if (input.startTime !== undefined) body.start = { dateTime: input.startTime }
-  if (input.endTime !== undefined) body.end = { dateTime: input.endTime }
+  if (input.location !== undefined) body.location = String(input.location ?? '').trim() || null
+  if (input.startTime !== undefined) body.start = { dateTime: input.startTime, timeZone }
+  if (input.endTime !== undefined) body.end = { dateTime: input.endTime, timeZone }
 
   const response = await googleCalendarRequest(userId, `calendars/primary/events/${encodeURIComponent(eventId)}`, {
     method: 'PATCH',

@@ -6,7 +6,7 @@ import { api } from '@/lib/api'
 interface Props {
   agentId: string
   agentName: string
-  onComplete: () => void
+  onComplete: (agentId: string) => void
 }
 
 export function SetupModal({ agentId, agentName, onComplete }: Props) {
@@ -42,7 +42,7 @@ export function SetupModal({ agentId, agentName, onComplete }: Props) {
     setSaving(true)
     try {
       await api.agents.update(agentId, { setupAnswers: finalAnswers })
-      onComplete()
+      onComplete(agentId)
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Failed to save agent setup')
     } finally {

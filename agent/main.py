@@ -1,9 +1,11 @@
+import asyncio
 import os
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Literal
 
-import anthropic
+from client import get_client
 import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -13,6 +15,8 @@ from pydantic import BaseModel
 
 from prompts import (
     build_system_prompt,
+    build_calendar_system_prompt,
+    build_calendar_ai_system_prompt,
     build_cluster_system_prompt,
     build_group_system_prompt,
     QUESTION_GENERATION_PROMPT,
@@ -20,9 +24,20 @@ from prompts import (
     INITIAL_MEMORY_PROMPT,
     MEMORY_UPDATE_PROMPT,
 )
-from tools import get_available_tools, execute_tool
+from tools import get_available_tools, execute_tool, get_calendar_ai_tools, execute_calendar_tool
 
 load_dotenv()
+
+# If a local `agent/.env` exists but doesn't set `GROQ_API_KEY`, also try loading the repo root `.env`
+# This ensures running the agent from the `agent/` folder still picks up the root `.env`.
+if not os.environ.get("GROQ_API_KEY"):
+    try:
+        repo_root_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+        if os.path.exists(repo_root_env):
+            # Override so a non-empty root .env will replace an empty local value
+            load_dotenv(repo_root_env, override=True)
+    except Exception:
+        pass
 
 app = FastAPI(title="Cluster Agent Service")
 app.add_middleware(
@@ -32,8 +47,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL = "claude-sonnet-4-20250514"
-MAX_HISTORY = 10
+FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", os.environ.get("GROQ_DEFAULT_MODEL", "llama-3.1-8b-instant"))
+REASONING_MODEL = os.environ.get("GROQ_REASONING_MODEL", "llama-3.3-70b-versatile")
+MODEL = FAST_MODEL
+MAX_HISTORY = 4
 
 
 MANAGER_ROUTER_PROMPT = """You are the Manager Agent in a multi-agent system.
@@ -61,13 +78,101 @@ def _split_business_context(memory: str) -> tuple[str, str]:
     return business_context, remaining_memory
 
 
+def _truncate_text(text: str, limit: int = 600) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _format_setup_answers(setup_answers: dict[str, Any]) -> str:
+    items = [f"{key}: {value}" for key, value in setup_answers.items() if value]
+    return "; ".join(items)
+
+
+def _format_history(history: list[Any], limit: int = MAX_HISTORY) -> str:
+    recent_history = history[-limit:] if len(history) > limit else history
+    return "\n".join(f"{message.role}: {message.content}" for message in recent_history)
+
+
+def _build_chat_context_message(
+    agent_name: str,
+    setup_answers: dict[str, Any],
+    memory: str,
+    business_context: str,
+    integrations: dict[str, Any],
+    files: list[dict[str, Any]],
+) -> str:
+    parts = [f"Agent context for {agent_name}."]
+    answers = _format_setup_answers(setup_answers)
+    if answers:
+        parts.append(f"Setup: {answers}.")
+    if memory:
+        parts.append(f"Memory: {_truncate_text(memory, 450)}.")
+    if business_context:
+        parts.append(f"Business: {_truncate_text(business_context, 450)}.")
+    connected = integrations.get("connected_integrations") or []
+    if connected:
+        parts.append(f"Connected integrations: {len(connected)}.")
+    if files:
+        parts.append(f"Files attached: {len(files)}.")
+    return " ".join(parts)
+
+
+def _build_group_context_message(
+    agent_name: str,
+    setup_answers: dict[str, Any],
+    memory: str,
+    members: list[dict],
+    sender_name: str,
+    history: list[dict],
+    chat_name: str,
+    integrations: dict[str, Any],
+) -> str:
+    self_member = next((member for member in members if member.get("name") == agent_name), {})
+    role = self_member.get("role") or setup_answers.get("Business type / role") or "Team member"
+    teammates = [member.get("name") for member in members if member.get("name") != agent_name and member.get("type") == "agent"]
+    recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
+    lines = [f"Group chat: {chat_name}", f"Agent: {agent_name} ({role})", f"Sender: {sender_name}"]
+    if teammates:
+        lines.append(f"Teammates: {', '.join(teammates)}")
+    answers = _format_setup_answers(setup_answers)
+    if answers:
+        lines.append(f"Setup: {answers}")
+    if memory:
+        lines.append(f"Memory: {_truncate_text(memory, 350)}")
+    connected = integrations.get("connected_integrations") or []
+    if connected:
+        lines.append(f"Connected integrations: {len(connected)}")
+    if recent_history:
+        lines.append("Recent history:")
+        lines.extend(f"- {entry['sender_name']}: {entry['content']}" for entry in recent_history)
+    return "\n".join(lines)
+
+
+def _build_cluster_context_message(workspace_context: str, integrations: dict[str, Any], history: list[Any]) -> str:
+    recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
+    lines = [f"Workspace context:\n{_truncate_text(workspace_context, 1500)}"]
+    connected = integrations.get("connected_integrations") or []
+    if connected:
+        lines.append(f"Connected integrations: {len(connected)}")
+    if recent_history:
+        lines.append("Recent chat:")
+        lines.extend(f"- {entry.role}: {entry.content}" for entry in recent_history)
+    return "\n".join(lines)
+
+
+def _extract_text(content: list[Any]) -> str:
+    return "".join(block.text for block in content if hasattr(block, "text"))
+
+
 def _manager_route(
-    client: anthropic.Anthropic,
+    client,
     business_context: str,
     message: str,
     history: list[Any],
 ) -> Literal["booking", "customer", "general"]:
-    recent_history = history[-3:] if len(history) > 3 else history
+    recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
     history_text = "\n".join(f"{m.role}: {m.content}" for m in recent_history)
     manager_input = (
         f"Business Context:\n{business_context or '(none)'}\n\n"
@@ -77,7 +182,7 @@ def _manager_route(
 
     try:
         response = client.messages.create(
-            model=MODEL,
+                model=FAST_MODEL,
             max_tokens=80,
             system=MANAGER_ROUTER_PROMPT,
             messages=[
@@ -104,53 +209,15 @@ def _manager_route(
 
 
 def _worker_prompt_suffix(route: Literal["booking", "customer", "general"], business_context: str) -> str:
-    common = (
-        "\n\nManager routing active. You are a worker in a multi-agent setup.\n"
-        "Always acknowledge the current time and schedule from Business Context in your reply before any other details.\n"
-        "Do not claim you executed a tool unless the tool result is present in conversation context.\n"
-    )
-    context_block = f"\nBusiness Context:\n{business_context}\n" if business_context else ""
-
+    common = "You are a worker in a multi-agent setup. Keep responses concise and never repeat hidden business context."
     if route == "booking":
-        return (
-            common
-            + context_block
-            + "Worker: Booking Specialist.\n"
-            + "Use save_event tool (or manage_booking alias) to create appointments. REQUIRED DETAILS BEFORE CALLING THE TOOL:\n"
-            + "  - customer_name: Full name of the customer\n"
-            + "  - customer_email: Customer's email address\n"
-            + "  - start_time: Specific time converted to strict ISO 8601 UTC (YYYY-MM-DDTHH:MM:SSZ)\n"
-            + "  - category: infer and pass one of business|chore|personal\n"
-            + "If any required detail is missing, ask for it first before calling the tool.\n"
-            + "Do not guess date math yourself. Pass the user's time phrase to the tool for normalization when needed.\n"
-            + "Interpret words like 'today', 'tomorrow', and weekdays in the local timezone context; do not shift days using UTC assumptions.\n"
-            + "If the user gives an ambiguous time like 'at 2', ask AM/PM before booking.\n"
-            + "Category rules:\n"
-            + "  - If user mentions a client name or a service (for example 'haircut'), set category='business'.\n"
-            + "  - If user mentions tasks like 'walk the dog' or 'pick up milk', set category='chore'.\n"
-            + "  - Otherwise set category='personal'.\n"
-            + "If an eventTypeId is ever used in the booking flow, it must be a literal integer (for example, 123456), never a string.\n"
-            + "Do NOT invent or assume parameters — always ask if needed.\n"
-            + "After booking, explicitly confirm the event type shown in the tool result so the user knows the right Cal event type was used.\n"
-        )
+        return common + " Booking worker: use add_calendar_event for calendar items, ask only for missing time, and avoid inventing customer details."
     if route == "customer":
-        return (
-            common
-            + context_block
-            + "Worker: Customer Memory Specialist.\n"
-            + "If asked about a customer or preferences, use search_customer_memories tool first.\n"
-            + "Summarize returned memory rows clearly and mention uncertainty when data is missing.\n"
-        )
-    return (
-        common
-        + context_block
-        + "Worker: General Assistant.\n"
-        + "Use tools when needed, but prioritize direct, concise help.\n"
-    )
+        return common + " Customer worker: use search_customer_memories first and summarize clearly with uncertainty when needed."
+    return common + " General worker: answer directly and briefly."
 
 
-def get_client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
 
 
 class HistoryMessage(BaseModel):
@@ -240,43 +307,68 @@ def health():
     return {"status": "ok"}
 
 
+def _retry_on_rate_limit(func, *args, max_retries=1, retry_delay=20, **kwargs):
+    """
+    Retry a function call if it hits a rate limit (429) error.
+    Waits retry_delay seconds before retrying.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except RuntimeError as e:
+            error_msg = str(e)
+            if ("rate_limit" in error_msg or "429" in error_msg) and attempt < max_retries:
+                print(f"[PYTHON] Rate limit hit, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                raise
+
+
 def run_tool_use_loop(
-    client: anthropic.Anthropic,
+    client,
     system_prompt: str,
     messages: list[dict],
     tools: list[dict],
     integrations: dict,
+    model: str = MODEL,
+    tool_executor=None,
 ) -> tuple[list[dict], list[Any]]:
     """
-    Run the tool use loop until Claude stops requesting tools.
+    Run the tool use loop until the model stops requesting tools.
     Returns the final messages list with tool results appended.
+    tool_executor: optional callable(name, inputs) -> str overriding execute_tool.
     """
+    _exec = tool_executor if tool_executor is not None else (
+        lambda name, inputs: execute_tool(name, inputs, integrations)
+    )
     while True:
-        response = client.messages.create(
-            model=MODEL,
+        response = _retry_on_rate_limit(
+            client.messages.create,
+            model=model,
             max_tokens=1024,
             system=system_prompt,
             messages=messages,
-            tools=tools if tools else anthropic.NOT_GIVEN,
+            # Only include tools when explicitly provided; basic chat sends no tools to reduce rate usage
+            tools=tools if tools else None,
         )
 
         if response.stop_reason != "tool_use":
-            # No more tool calls — return the final Claude response content.
+            # No more tool calls — return the final response content.
             return messages, list(response.content)
 
-        # Execute client-side tool calls (skip native tools like web_search — Anthropic runs those)
+        # Execute client-side tool calls.
         tool_results = []
         for block in response.content:
             if block.type == "tool_use" and block.name != "web_search":
-                result = execute_tool(block.name, block.input, integrations)
+                result = _exec(block.name, block.input)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
                     "content": result[:4000],
                 })
 
-        # If all tool calls were native (web_search), there's nothing for us to execute.
-        # Return the current response content so the caller can surface Claude's final answer.
+        # If all tool calls were native, there's nothing for us to execute.
+        # Return the current response content so the caller can surface the final answer.
         if not tool_results:
             return messages, list(response.content)
 
@@ -297,6 +389,7 @@ async def stream_chat(
     integrations: dict[str, Any],
     files: list[dict[str, Any]],
 ) -> AsyncIterator[str]:
+    print(f"[PYTHON] stream_chat called: agent={agent_name}, message_len={len(message)}, history_len={len(history)}")
     client = get_client()
     # Inject agent identity into integrations so browse_website can log activity
     enriched_integrations = {
@@ -308,6 +401,7 @@ async def stream_chat(
     }
     business_context, memory_without_context = _split_business_context(memory)
     route = _manager_route(client, business_context, message, history)
+    print(f"[PYTHON] Route selected: {route}")
     system_prompt = build_system_prompt(
         agent_name,
         setup_answers,
@@ -315,37 +409,102 @@ async def stream_chat(
         files or [],
         enriched_integrations,
     ) + _worker_prompt_suffix(route, business_context)
-    tools = get_available_tools(enriched_integrations)
+    tools = []
+    print(f"[PYTHON] Tools disabled for basic chat: {len(tools)} available")
+
+    messages: list[dict] = []
+    context_message = _build_chat_context_message(
+        agent_name,
+        setup_answers,
+        memory_without_context,
+        business_context,
+        enriched_integrations,
+        files or [],
+    )
+    if context_message:
+        messages.append({"role": "user", "content": context_message})
 
     recent_history = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
-    messages: list[dict] = [{"role": m.role, "content": m.content} for m in recent_history]
+    messages.extend({"role": m.role, "content": m.content} for m in recent_history)
     messages.append({"role": "user", "content": message})
+    print(f"[PYTHON] Prepared {len(messages)} messages for LLM")
 
     # Handle tool use loop (non-streaming) if tools are available
     final_content = None
     if tools:
-        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, enriched_integrations)
+        print(f"[PYTHON] Running tool use loop with {len(tools)} tools")
+        try:
+            messages, final_content = run_tool_use_loop(
+                client,
+                system_prompt,
+                messages,
+                tools,
+                enriched_integrations,
+                model=FAST_MODEL,
+            )
+            print(f"[PYTHON] Tool use loop returned final_content={final_content is not None}")
+        except RuntimeError as e:
+            error_msg = str(e)
+            print(f"[PYTHON] Tool use loop error: {error_msg}")
+            if "rate_limit" in error_msg or "429" in error_msg:
+                    yield f"data: {json.dumps({'delta': '⚠️ API rate limit reached. The Groq service returned a rate limit or quota error. Please wait a few minutes and retry.'})}\n\n"
+            else:
+                    yield f"data: {json.dumps({'delta': f'⚠️ Error: {error_msg[:150]}'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
     if final_content is not None:
-        emitted_text = False
-        for block in final_content:
-            if hasattr(block, "text"):
-                emitted_text = True
-                yield f"data: {json.dumps({'delta': block.text})}\n\n"
-        if emitted_text:
+        print(f"[PYTHON] Emitting tool use result")
+        text_chunk = _extract_text(final_content)
+        if text_chunk:
+            print(f"[PYTHON] Yielding text: {len(text_chunk)} chars")
+            yield f"data: {json.dumps({'delta': text_chunk})}\n\n"
+            print(f"[PYTHON] Tool result complete, sending [DONE]")
             yield "data: [DONE]\n\n"
             return
 
     # Stream final response
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=2048,
-        system=system_prompt,
-        messages=messages,
-    ) as stream:
-        for text in stream.text_stream:
-            yield f"data: {json.dumps({'delta': text})}\n\n"
-
+    print(f"[PYTHON] Starting LLM stream with model={MODEL}")
+    stream_started = False
+    try:
+        # Create stream with retry logic
+        stream = None
+        for attempt in range(2):  # Try once, then retry if rate limited
+            try:
+                stream = client.messages.stream(
+                    model=FAST_MODEL,
+                    max_tokens=2048,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                break
+            except RuntimeError as e:
+                error_msg = str(e)
+                if ("rate_limit" in error_msg or "429" in error_msg) and attempt == 0:
+                    print(f"[PYTHON] Rate limit hit on stream init, retrying in 20s")
+                    time.sleep(20)
+                else:
+                    raise
+        
+        with stream as s:
+            for text in s.text_stream:
+                if not stream_started:
+                    print(f"[PYTHON] First token received")
+                    stream_started = True
+                print(f"[PYTHON] Yielding delta: {len(text)} chars")
+                yield f"data: {json.dumps({'delta': text})}\n\n"
+    except RuntimeError as e:
+        error_msg = str(e)
+        print(f"[PYTHON] LLM stream error: {error_msg}")
+        if "rate_limit" in error_msg or "429" in error_msg:
+                if not stream_started:
+                    yield f"data: {json.dumps({'delta': 'Rate limit: Groq service rate limit encountered. Wait a few minutes and retry.'})}\n\n"
+        else:
+            if not stream_started:
+                    yield f"data: {json.dumps({'delta': f'Error: {error_msg[:150]}'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    print(f"[PYTHON] LLM stream ended, sending [DONE]")
     yield "data: [DONE]\n\n"
 
 
@@ -371,32 +530,82 @@ async def stream_group_chat(
         chat_name=chat_name,
         integrations=integrations,
     )
-    tools = get_available_tools(integrations)
+    tools = []
 
-    messages: list[dict] = [{"role": "user", "content": message}]
+    messages: list[dict] = []
+    context_message = _build_group_context_message(
+        agent_name,
+        setup_answers,
+        memory,
+        members,
+        sender_name,
+        [m.model_dump() for m in history],
+        chat_name,
+        integrations,
+    )
+    if context_message:
+        messages.append({"role": "user", "content": context_message})
+
+    messages.append({"role": "user", "content": message})
 
     final_content = None
     if tools:
-        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
-
-    if final_content is not None:
-        emitted_text = False
-        for block in final_content:
-            if hasattr(block, "text"):
-                emitted_text = True
-                yield f"data: {json.dumps({'delta': block.text})}\n\n"
-        if emitted_text:
+        try:
+            messages, final_content = run_tool_use_loop(
+                client,
+                system_prompt,
+                messages,
+                tools,
+                integrations,
+                model=FAST_MODEL,
+            )
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "rate_limit" in error_msg or "429" in error_msg:
+                yield f"data: {json.dumps({'delta': 'Rate limit: Groq service rate limit encountered. Wait a few minutes and retry.'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'delta': f'Error: {error_msg[:150]}'})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=1024,
-        system=system_prompt,
-        messages=messages,
-    ) as stream:
-        for text in stream.text_stream:
-            yield f"data: {json.dumps({'delta': text})}\n\n"
+    if final_content is not None:
+        text_chunk = _extract_text(final_content)
+        if text_chunk:
+            yield f"data: {json.dumps({'delta': text_chunk})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+    try:
+        # Create stream with retry logic
+        stream = None
+        for attempt in range(2):  # Try once, then retry if rate limited
+            try:
+                stream = client.messages.stream(
+                    model=FAST_MODEL,
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                break
+            except RuntimeError as e:
+                error_msg = str(e)
+                if ("rate_limit" in error_msg or "429" in error_msg) and attempt == 0:
+                    print(f"[PYTHON] Rate limit hit on group stream init, retrying in 20s")
+                    time.sleep(20)
+                else:
+                    raise
+        
+        with stream as s:
+            for text in s.text_stream:
+                yield f"data: {json.dumps({'delta': text})}\n\n"
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "rate_limit" in error_msg or "429" in error_msg:
+            yield f"data: {{\"delta\": \"Rate limit: Groq service rate limit encountered. Wait a few minutes and retry.\"}}\n\n"
+        else:
+            yield f"data: {{\"delta\": \"Error: {error_msg[:150]}\"}}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
     yield "data: [DONE]\n\n"
 
@@ -448,7 +657,7 @@ class AutomateRequest(BaseModel):
 
 
 def _blocks_to_dict(content) -> list[dict]:
-    """Convert Anthropic SDK content blocks to plain dicts for re-use in messages."""
+    """Convert SDK content blocks to plain dicts for re-use in messages."""
     result = []
     for block in content:
         if not hasattr(block, "type"):
@@ -505,19 +714,11 @@ Return ONLY a JSON object — no markdown fences, no explanation:
   "notes": "One sentence: what this automation will actually do when it runs"
 }}
 
-Rules:
-- Only include integrations genuinely required for THIS specific goal
-- required=true means the task is completely blocked without it
-- required=false means the agent can work around the missing item
-- estimated_steps: 2-8 (the hard cap is 8)
-- web_access: true whenever the goal needs current or live information
-- will_send_emails: true only if the goal explicitly requires sending emails
-- will_modify_data: true if the agent will write, update, or delete anything
-- If the goal only needs web research, return an empty requirements array"""
+Rules:"""
 
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=FAST_MODEL,
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -560,11 +761,7 @@ def run_automation(req: AutomateRequest):
     # Tight automation prompt — no padding, agent knows to be concise
     system_prompt = (
         base_prompt + "\n\n"
-        "AUTOMATION MODE — execute the goal autonomously using tools. No questions.\n"
-        "Be efficient: search once, read the most relevant result, write a concise report.\n"
-        "Final report must use bullet points, not paragraphs. Keep each section to 3-5 bullets max.\n\n"
-        "Final report format (required):\n"
-        "## Summary\n## Key Findings\n## Action Items\n## Alerts"
+        "AUTOMATION MODE: use tools efficiently and return a short final report with Summary, Key Findings, Action Items, and Alerts."
     )
 
     MAX_STEPS = 8          # hard cap on tool calls
@@ -581,11 +778,11 @@ def run_automation(req: AutomateRequest):
         trimmed_messages = messages[:1] + [m for pair in turn_pairs[-CONTEXT_STEPS:] for m in pair]
 
         response = client.messages.create(
-            model=MODEL,
+            model=REASONING_MODEL,
             max_tokens=MAX_TOKENS,
             system=system_prompt,
             messages=trimmed_messages,
-            tools=tools if tools else anthropic.NOT_GIVEN,
+            tools=tools if tools else None,
         )
 
         if response.stop_reason != "tool_use":
@@ -619,7 +816,7 @@ def run_automation(req: AutomateRequest):
                 steps.append({
                     "tool": "web_search",
                     "input": {"query": query[:200]},
-                    "output": "Search handled by Anthropic",
+                    "output": "Search handled by the search tool",
                     "status": "success",
                 })
 
@@ -631,7 +828,7 @@ def run_automation(req: AutomateRequest):
     # Force final answer after step limit
     trimmed_messages = messages[:1] + [m for pair in turn_pairs[-CONTEXT_STEPS:] for m in pair]
     final_response = client.messages.create(
-        model=MODEL,
+        model=REASONING_MODEL,
         max_tokens=MAX_TOKENS,
         system=system_prompt,
         messages=trimmed_messages + [{"role": "user", "content": "Step limit reached. Write your final report now using only what you've gathered."}],
@@ -667,7 +864,7 @@ async def group_relevance(req: GroupRelevanceRequest):
     )
 
     response = client.messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=64,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -698,7 +895,7 @@ async def generate_questions(req: GenerateQuestionsRequest):
     prompt = QUESTION_GENERATION_PROMPT.format(agent_name=req.agent_name)
 
     response = client.messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -723,7 +920,7 @@ async def initialize_memory(req: InitializeMemoryRequest):
     )
 
     response = client.messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -733,20 +930,25 @@ async def initialize_memory(req: InitializeMemoryRequest):
 
 @app.post("/update-memory")
 async def update_memory(req: UpdateMemoryRequest):
-    client = get_client()
-    prompt = MEMORY_UPDATE_PROMPT.format(
-        agent_name=req.agent_name,
-        current_memory=req.current_memory or "(empty)",
-        conversation=req.conversation,
-    )
+    try:
+        client = get_client()
+        prompt = MEMORY_UPDATE_PROMPT.format(
+            agent_name=req.agent_name,
+            current_memory=req.current_memory or "(empty)",
+            conversation=req.conversation,
+        )
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
+        response = await asyncio.to_thread(
+            client.messages.create,
+            model=FAST_MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-    return {"memory": response.content[0].text.strip()}
+        return {"memory": response.content[0].text.strip()}
+    except Exception:
+        # Memory refresh is best-effort only; never fail the chat flow.
+        return {"memory": req.current_memory or ""}
 
 
 async def stream_cluster_chat(
@@ -756,30 +958,57 @@ async def stream_cluster_chat(
     integrations: dict[str, Any],
 ) -> AsyncIterator[str]:
     client = get_client()
-    system_prompt = build_cluster_system_prompt(workspace_context)
-    tools = get_available_tools(integrations)
+    calendar_mode = workspace_context.strip().startswith("Calendar context:")
+
+    if calendar_mode:
+        system_prompt = build_calendar_ai_system_prompt(workspace_context)
+        tools = get_calendar_ai_tools()
+        calendar_executor = lambda name, inputs: execute_calendar_tool(name, inputs)
+    else:
+        system_prompt = build_cluster_system_prompt(workspace_context)
+        tools = get_available_tools(integrations)
+        calendar_executor = None
 
     recent = history[-MAX_HISTORY:] if len(history) > MAX_HISTORY else history
-    messages: list[dict] = [{"role": m.role, "content": m.content} for m in recent]
+    messages: list[dict] = []
+    if not calendar_mode:
+        context_message = _build_cluster_context_message(workspace_context, integrations, recent)
+        if context_message:
+            messages.append({"role": "user", "content": context_message})
+    messages.extend({"role": m.role, "content": m.content} for m in recent)
     messages.append({"role": "user", "content": message})
 
     final_content = None
     if tools:
-        messages, final_content = run_tool_use_loop(client, system_prompt, messages, tools, integrations)
+        try:
+            messages, final_content = run_tool_use_loop(
+                client,
+                system_prompt,
+                messages,
+                tools,
+                integrations,
+                model=FAST_MODEL,
+                tool_executor=calendar_executor,
+            )
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "rate_limit" in error_msg or "429" in error_msg:
+                yield f"data: {json.dumps({'delta': '⚠️ Rate limit reached. Please wait a moment and retry.'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'delta': f'⚠️ Error: {error_msg[:150]}'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
     if final_content is not None:
-        emitted_text = False
-        for block in final_content:
-            if hasattr(block, "text"):
-                emitted_text = True
-                yield f"data: {json.dumps({'delta': block.text})}\n\n"
-        if emitted_text:
+        text_chunk = _extract_text(final_content)
+        if text_chunk:
+            yield f"data: {json.dumps({'delta': text_chunk})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
     with client.messages.stream(
-        model=MODEL,
-        max_tokens=1024,
+        model=FAST_MODEL,
+        max_tokens=512 if calendar_mode else 1024,
         system=system_prompt,
         messages=messages,
     ) as stream:
@@ -858,7 +1087,7 @@ Do not include any preamble or explanation. Start directly with the content."""
 
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=FAST_MODEL,
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -909,18 +1138,12 @@ Return ONLY a JSON object with this structure:
 }}
 
 Step types to use:
-- browse: visit a website, log in, extract data
-- api: call Google/Slack APIs using OAuth
-- extract: process previous step's data
-- report: generate a formatted summary (always last before delivery)
-- send_email: send an email via Gmail
-- notify_chat: deliver result to agent chat (default delivery)
 
 Keep it to 3-6 steps. Be practical and specific."""
 
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=REASONING_MODEL,
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -957,7 +1180,7 @@ Return only the recovered result text, no explanation."""
 
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=REASONING_MODEL,
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )

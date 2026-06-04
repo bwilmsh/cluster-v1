@@ -28,6 +28,8 @@ export default function GroupChatPage() {
   const menuRef = useRef<HTMLDivElement>(null)
   const agentBuffersRef = useRef<Record<string, string>>({})
   const activeStreamingAgentRef = useRef<string | null>(null)
+  const flushTimerRef = useRef<number | null>(null)
+  const FLUSH_MS = 100
 
   async function loadChat() {
     const [chatData, msgs] = await Promise.all([
@@ -87,9 +89,21 @@ export default function GroupChatPage() {
           if (activeStreamingAgentRef.current !== event.agentName) continue
           agentBuffersRef.current[event.agentName] =
             (agentBuffersRef.current[event.agentName] ?? '') + event.delta
-          setStreamingAgents([{ name: event.agentName, content: agentBuffersRef.current[event.agentName] }])
+
+          if (!flushTimerRef.current) {
+            flushTimerRef.current = window.setInterval(() => {
+              const agentName = activeStreamingAgentRef.current
+              if (!agentName) return
+              const buf = agentBuffersRef.current[agentName] ?? ''
+              setStreamingAgents([{ name: agentName, content: buf }])
+            }, FLUSH_MS)
+          }
         } else if (event.type === 'agent_done' && event.agentName) {
           if (activeStreamingAgentRef.current !== event.agentName) continue
+          if (flushTimerRef.current) {
+            clearInterval(flushTimerRef.current)
+            flushTimerRef.current = null
+          }
           const finalContent = agentBuffersRef.current[event.agentName] ?? ''
           if (finalContent) {
             setMessages((prev) => [
@@ -118,6 +132,10 @@ export default function GroupChatPage() {
         }
       }
     } finally {
+      if (flushTimerRef.current) {
+        clearInterval(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
       agentBuffersRef.current = {}
       activeStreamingAgentRef.current = null
       setStreamingAgents([])

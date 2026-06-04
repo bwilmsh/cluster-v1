@@ -35,7 +35,7 @@ const NODE_CONFIG: Record<WorkflowNodeType, { color: string; bg: string; label: 
 // ─── Custom node component ─────────────────────────────────────────────────────
 
 function WorkflowNode({ data, selected }: NodeProps) {
-  const nodeData = data as WorkflowNodeData & { nodeType: WorkflowNodeType }
+  const nodeData = data as unknown as WorkflowNodeData & { nodeType: WorkflowNodeType }
   const cfg = NODE_CONFIG[nodeData.nodeType] ?? NODE_CONFIG.action
 
   return (
@@ -102,7 +102,7 @@ function NodeEditor({
   onUpdate: (id: string, data: Partial<WorkflowNodeData>) => void
   onClose: () => void
 }) {
-  const nodeData = node.data as WorkflowNodeData & { nodeType: WorkflowNodeType }
+  const nodeData = node.data as unknown as WorkflowNodeData & { nodeType: WorkflowNodeType }
   const [label, setLabel] = useState(nodeData.label)
   const [capability, setCapability] = useState(nodeData.capability ?? '')
 
@@ -260,7 +260,7 @@ function CanvasInner({ workflow }: { workflow: Workflow }) {
     try {
       // Convert back to DB format
       const dbNodes = nodes.map((n) => {
-        const { nodeType, ...rest } = n.data as WorkflowNodeData & { nodeType: WorkflowNodeType }
+        const { nodeType, ...rest } = n.data as unknown as WorkflowNodeData & { nodeType: WorkflowNodeType }
         return {
           id: n.id,
           type: nodeType,

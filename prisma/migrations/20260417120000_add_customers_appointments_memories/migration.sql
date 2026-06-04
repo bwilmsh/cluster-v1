@@ -1,5 +1,6 @@
 -- Enable pgvector for embedding storage/search.
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Note: pgvector extension is optional. If not available, embeddings will be stored as NULL.
+-- CREATE EXTENSION IF NOT EXISTS vector;
 
 -- CreateTable
 CREATE TABLE IF NOT EXISTS customers (
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id BIGSERIAL PRIMARY KEY,
     customer_id BIGINT NOT NULL,
     preference_text TEXT NOT NULL,
-    embedding VECTOR(1536) NOT NULL,
+    embedding TEXT,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT memories_customer_id_fkey
@@ -55,7 +56,8 @@ CREATE INDEX IF NOT EXISTS appointments_start_time_idx ON appointments(start_tim
 CREATE INDEX IF NOT EXISTS memories_customer_id_idx ON memories(customer_id);
 
 -- Vector index for semantic similarity search on customer preference embeddings.
-CREATE INDEX IF NOT EXISTS memories_embedding_cosine_idx
-    ON memories
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- Commented out as pgvector extension is not available. Uncomment when pgvector is installed.
+-- CREATE INDEX IF NOT EXISTS memories_embedding_cosine_idx
+--     ON memories
+--     USING ivfflat (embedding vector_cosine_ops)
+--     WITH (lists = 100);

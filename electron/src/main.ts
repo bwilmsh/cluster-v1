@@ -47,11 +47,9 @@ function getSetting<T>(key: string, defaultValue: T): T {
   return (readSettings()[key] as T) ?? defaultValue
 }
 
-function getAnthropicKey(): string | null {
-  // 1. System/process env var (works in dev via .env)
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY
-  // 2. Saved in app settings
-  return getSetting<string | null>('anthropicApiKey', null)
+function getGroqApiKey(): string | null {
+  if (process.env.GROQ_API_KEY) return process.env.GROQ_API_KEY
+  return getSetting<string | null>('groqApiKey', null)
 }
 
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000'
@@ -254,8 +252,8 @@ function registerIpcHandlers(win: BrowserWindow) {
     const hasPermission = getSetting<boolean>('computerUsePermission', false)
     if (!hasPermission) throw new Error('Computer control permission not granted')
 
-    const apiKey = getAnthropicKey()
-    if (!apiKey) throw new Error('Anthropic API key not set. Go to Settings → API Key to add it.')
+    const apiKey = getGroqApiKey()
+    if (!apiKey) throw new Error('Groq API key not set. Set GROQ_API_KEY env or Settings → Groq API Key')
 
     try {
       const result = await runComputerUse(task, win, apiKey)
@@ -269,16 +267,16 @@ function registerIpcHandlers(win: BrowserWindow) {
 
   // ── Settings: API key ─────────────────────────────────────────────────────
 
-  ipcMain.handle('settings:get-api-key-set', () => !!getAnthropicKey())
+  ipcMain.handle('settings:get-api-key-set', () => !!getGroqApiKey())
 
   ipcMain.handle('settings:set-api-key', (_event, key: string) => {
-    writeSetting('anthropicApiKey', key.trim())
-    process.env.ANTHROPIC_API_KEY = key.trim()
+    writeSetting('groqApiKey', key.trim())
+    process.env.GROQ_API_KEY = key.trim()
   })
 
   ipcMain.handle('settings:clear-api-key', () => {
-    writeSetting('anthropicApiKey', null)
-    delete process.env.ANTHROPIC_API_KEY
+    writeSetting('groqApiKey', null)
+    delete process.env.GROQ_API_KEY
   })
 
   ipcMain.on('computer-use:stop', () => {

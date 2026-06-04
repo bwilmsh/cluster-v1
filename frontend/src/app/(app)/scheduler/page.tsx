@@ -2,7 +2,7 @@
 import React from 'react'
 import dynamic from 'next/dynamic'
 
-const SchedulerBoard = dynamic(() => import('../../components/Scheduler/Board'), { ssr: false })
+const SchedulerBoard = dynamic(() => import('@/components/Scheduler/Board'), { ssr: false })
 
 export default function Page() {
   return (

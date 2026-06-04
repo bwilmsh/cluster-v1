@@ -48,8 +48,13 @@ function MemberAvatars({ members }: { members: GroupChatMember[] }) {
           <div
             key={m.id}
             title={m.agent!.name}
-            className={`w-7 h-7 rounded-full border-2 border-surface-border flex items-center justify-center text-[10px] font-semibold shrink-0 ${p.bg} ${p.text}`}
-            style={{ marginLeft: i === 0 ? 0 : -8, zIndex: agentMembers.length - i }}
+            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${p.bg} ${p.text}`}
+            style={{
+              marginLeft: i === 0 ? 0 : -8,
+              zIndex: agentMembers.length - i,
+              border: '2px solid var(--glass-border)',
+              outline: '1px solid var(--glass-bg)',
+            }}
           >
             {initials(m.agent!.name)}
           </div>
@@ -107,22 +112,20 @@ export default function GroupChatsPage() {
         {loading ? (
           <div className="py-12 flex justify-center"><LoadingDots /></div>
         ) : chats.length === 0 ? (
-          <div
-            className="text-center py-20 rounded-2xl border-2 border-dashed"
-            style={{
-              borderColor: 'var(--border)',
-              backgroundColor: 'var(--accent-muted)',
-            }}
-          >
-            <p className="text-sm mb-5" style={{ color: 'var(--text-secondary)' }}>
-              No group chats yet
-            </p>
+          <div className="glass animate-fade-slide-up text-center py-20 rounded-3xl flex flex-col items-center gap-5">
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center"
+              style={{ background: 'var(--glow-indigo)', border: '1px solid var(--glass-border)' }}
+            >
+              <svg className="w-7 h-7" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--accent-indigo)' }}>
+                <path d="M14 8C14 11.3137 11.3137 14 8 14C6.92774 14 5.92037 13.7074 5.05573 13.1983L2 14L2.80168 10.9443C2.29258 10.0796 2 9.07226 2 8C2 4.68629 4.68629 2 8 2C11.3137 2 14 4.68629 14 8Z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>No group chats yet</p>
             <Link
               href="/groupchats/new"
-              className="px-6 py-3 rounded-lg font-medium text-white transition-all duration-200 inline-block hover:-translate-y-0.5 hover:shadow-lg"
-              style={{
-                backgroundColor: 'var(--accent)',
-              }}
+              className="px-6 py-2.5 rounded-xl font-medium text-white text-sm transition-all duration-200 hover:-translate-y-0.5"
+              style={{ backgroundColor: 'var(--accent)' }}
               onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent-hover)')}
               onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'var(--accent)')}
             >

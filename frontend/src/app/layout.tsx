@@ -11,9 +11,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} dark-mode`}>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} data-theme="dark" suppressHydrationWarning>
       <body
-        className="h-screen overflow-hidden antialiased"
+        className="min-h-screen overflow-hidden antialiased"
         style={{
           backgroundColor: 'var(--bg-primary)',
           color: 'var(--text-primary)',

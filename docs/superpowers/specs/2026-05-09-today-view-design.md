@@ -1,8 +1,14 @@
 # Cluster — Today View
 
 **Date:** 2026-05-09
-**Status:** Approved
-**Scope:** New `/today` route with a tasks panel and a calendar-events panel. Sidebar gets a new "Today" item placed first. No schema changes, no backend changes.
+**Status:** Superseded — implementation re-routed to `/dashboard` per CLUSTER.md.
+**Scope (original):** New `/today` route with a tasks panel and a calendar-events panel. Sidebar gets a new "Today" item placed first.
+**Scope (as shipped):** The `TodayView` component now powers `/dashboard` (replacing the prior agent/automation overview). The `/today` route and the new sidebar item were removed. Root `/` redirect changed from `/chat` to `/dashboard`. CLUSTER.md treats Dashboard as the today page; a parallel Today route violated the Golden Rule (two pages with overlapping purpose).
+
+**Outstanding gaps vs CLUSTER.md "Dashboard must-haves" (not addressed here):**
+- Overdue tasks surfaced at top of the task list.
+- "Tomorrow preview" — the current panel shows "Rest of week" instead of a small Tomorrow peek.
+- Today's events from Google Calendar and Apple Calendar (only internal Cluster events are shown today).
 
 ---
 

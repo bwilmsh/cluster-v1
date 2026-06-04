@@ -22,39 +22,83 @@ export default function AgentChatPage() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [showComputerUse, setShowComputerUse] = useState(false)
   const [automationMode, setAutomationMode] = useState(false)
+  const [loadingAgent, setLoadingAgent] = useState(true)
   const streamingContentRef = useRef('')
+  const flushTimerRef = useRef<number | null>(null)
+  const streamingTargetRef = useRef('')
+  const FLUSH_MS = 100
   const autoSendPending = useRef<string | null>(null)
 
   // Core send function — accepts text directly, does not read from input state
   const sendText = useCallback(async (text: string, options?: { skipLocalEcho?: boolean }) => {
-    if (!text.trim() || streaming) return
+    console.log('[CHAT] sendText called with:', { text, skipLocalEcho: options?.skipLocalEcho, streaming })
+    if (!text.trim() || streaming) {
+      console.log('[CHAT] Aborting: empty text or already streaming')
+      return
+    }
+    const assistantMsgId = `${Date.now().toString()}-stream`
     if (!options?.skipLocalEcho) {
       const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: text.trim() }
-      setMessages((prev) => [...prev, userMsg])
+      console.log('[CHAT] Adding user message to UI:', userMsg)
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        { id: assistantMsgId, role: 'assistant', content: '' },
+      ])
+    } else {
+      setMessages((prev) => [...prev, { id: assistantMsgId, role: 'assistant', content: '' }])
     }
+    setStreamingMessageId(assistantMsgId)
     setStreaming(true)
     setStreamingContent('')
     streamingContentRef.current = ''
     try {
+      console.log('[CHAT] Starting SSE stream to /api/agents/' + id + '/chat')
+      streamingTargetRef.current = ''
       for await (const event of readSSE(`/api/agents/${id}/chat`, { message: text.trim() })) {
         if (event.delta) {
-          streamingContentRef.current += event.delta
-          setStreamingContent(streamingContentRef.current)
+          console.log('[CHAT] Received delta:', event.delta)
+          streamingTargetRef.current += event.delta
+
+          if (!flushTimerRef.current) {
+            flushTimerRef.current = window.setInterval(() => {
+              const current = streamingTargetRef.current
+              setStreamingContent(current)
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantMsgId ? { ...message, content: current } : message,
+                ),
+              )
+            }, FLUSH_MS)
+          }
         }
       }
+      console.log('[CHAT] SSE stream ended')
+    } catch (err) {
+      console.error('[CHAT] SSE stream error:', err)
     } finally {
-        const content = streamingContentRef.current
+        if (flushTimerRef.current) {
+          clearInterval(flushTimerRef.current)
+          flushTimerRef.current = null
+        }
+        const content = streamingTargetRef.current || streamingContentRef.current
+        console.log('[CHAT] Stream finished with content length:', content.length)
         if (content) {
-          setMessages((msgs) => [
-            ...msgs,
-            { id: Date.now().toString() + '-a', role: 'assistant', content },
-          ])
+          console.log('[CHAT] Adding assistant message to UI')
+          setMessages((msgs) =>
+            msgs.some((message) => message.id === assistantMsgId)
+              ? msgs.map((message) => (message.id === assistantMsgId ? { ...message, content } : message))
+              : [...msgs, { id: Date.now().toString() + '-a', role: 'assistant' as const, content }]
+          )
         } else {
+          console.log('[CHAT] No streamed content, fetching messages from API')
           try {
             const msgs = await api.agents.messages(id)
+            console.log('[CHAT] Fetched messages from API:', msgs.length)
             const fetchedMessages = msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content }))
             setMessages((prev) => {
               if (prev.length === 0) return fetchedMessages
@@ -66,21 +110,29 @@ export default function AgentChatPage() {
                 )
                 if (!alreadyPresent) merged.push(m)
               }
+              console.log('[CHAT] Merged messages count:', merged.length)
               return merged
             })
-          } catch {
-            // ignore network errors
+          } catch (err) {
+            console.error('[CHAT] Failed to fetch messages:', err)
           }
         }
         setStreamingContent('')
         streamingContentRef.current = ''
+        streamingTargetRef.current = ''
+        setStreamingMessageId(null)
         setStreaming(false)
     }
   }, [streaming, id])
 
   const handleSend = useCallback(async () => {
+    console.log('[CHAT] handleSend called, input:', input.trim())
     const text = input.trim()
-    if (!text) return
+    if (!text) {
+      console.log('[CHAT] handleSend: empty input')
+      return
+    }
+    console.log('[CHAT] Clearing input and calling sendText')
     setInput('')
     await sendText(text)
   }, [input, sendText])
@@ -101,27 +153,46 @@ export default function AgentChatPage() {
       }
     }
 
-    Promise.all([
-      api.agents.list().then((agents) => agents.find((a) => a.id === id) ?? null),
-      api.agents.messages(id),
-      api.agents.files(id),
-    ]).then(([foundAgent, msgs, agentFiles]) => {
-      setAgent(foundAgent)
-      const fetchedMessages = msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content }))
-      setMessages((prev) => {
-        if (prev.length === 0) return fetchedMessages
+    let cancelled = false
 
-        const merged = [...fetchedMessages]
-        for (const existing of prev) {
-          const alreadyPresent = merged.some(
-            (m) => m.id === existing.id || (m.role === existing.role && m.content === existing.content)
-          )
-          if (!alreadyPresent) merged.push(existing)
-        }
-        return merged
+    setLoadingAgent(true)
+    api.agents.list()
+      .then((agents) => {
+        if (cancelled) return
+        setAgent(agents.find((a) => a.id === id) ?? null)
       })
-      setFiles(agentFiles)
-    })
+      .finally(() => {
+        if (!cancelled) setLoadingAgent(false)
+      })
+
+    api.agents.messages(id)
+      .then((msgs) => {
+        if (cancelled) return
+        const fetchedMessages = msgs.map((m: Message) => ({ id: m.id, role: m.role, content: m.content }))
+        setMessages((prev) => {
+          if (prev.length === 0) return fetchedMessages
+
+          const merged = [...fetchedMessages]
+          for (const existing of prev) {
+            const alreadyPresent = merged.some(
+              (m) => m.id === existing.id || (m.role === existing.role && m.content === existing.content)
+            )
+            if (!alreadyPresent) merged.push(existing)
+          }
+          return merged
+        })
+      })
+      .catch(() => {})
+
+    api.agents.files(id)
+      .then((agentFiles) => {
+        if (!cancelled) setFiles(agentFiles)
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
   // Fire auto-send once agent data is loaded
@@ -172,7 +243,7 @@ export default function AgentChatPage() {
     ?? ''
   const isActive = agent?.status !== 'setting_up' && agent?.status !== 'offline'
 
-  if (!agent) return (
+  if (loadingAgent && !agent) return (
     <div className="h-full flex flex-col">
       <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
         <div className="w-6 h-4 bg-white/5 rounded animate-pulse" />
@@ -187,18 +258,37 @@ export default function AgentChatPage() {
     </div>
   )
 
+  if (!agent) return (
+    <div className="h-full flex items-center justify-center px-6 text-sm text-white/60">
+      Agent not found.
+    </div>
+  )
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="shrink-0 border-b border-surface-border px-5 h-14 flex items-center gap-3">
+      <div
+        className="shrink-0 px-5 h-14 flex items-center gap-3"
+        style={{
+          borderBottom: '0.5px solid var(--border)',
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(var(--glass-blur))',
+        }}
+      >
         <Link href="/" className="text-white/30 hover:text-white/60 text-sm transition-colors shrink-0">
           ←
         </Link>
 
         <div className="flex items-center gap-2.5 flex-1 min-w-0">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-emerald-400' : 'bg-white/20'}`} />
+          <span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{
+              backgroundColor: isActive ? '#34d399' : 'rgba(255,255,255,0.2)',
+              boxShadow: isActive ? '0 0 6px rgba(52,211,153,0.5)' : 'none',
+            }}
+          />
           <div className="min-w-0">
-            <p className="font-medium text-white text-sm leading-tight truncate">{agent.name}</p>
+            <p className="font-medium text-sm leading-tight truncate" style={{ color: 'var(--text-primary)' }}>{agent.name}</p>
             {role && <p className="text-[11px] text-white/35 truncate">{role}</p>}
           </div>
         </div>
@@ -225,6 +315,7 @@ export default function AgentChatPage() {
             messages={messages}
             streamingContent={streamingContent}
             isStreaming={streaming}
+            streamingMessageId={streamingMessageId}
             inputValue={input}
             onInputChange={setInput}
             onSubmit={handleSend}

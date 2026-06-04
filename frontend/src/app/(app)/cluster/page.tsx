@@ -37,7 +37,7 @@ export default function ClusterLanding(){
         <section style={{padding:'32px 0',textAlign:'center'}}>
           <h2>Get early access</h2>
           <p>Join the waitlist for the Cluster AI Productivity OS.</p>
-          <button style={{padding:'12px 20px',borderRadius:10,background:'linear-gradient(90deg,#6ee7b7,#7c5cff)',border:'none'}}>Join waitlist</button>
+          <button style={{padding:'12px 20px',borderRadius:10,background:'var(--accent)',border:'none'}}>Join waitlist</button>
         </section>
       </main>
 

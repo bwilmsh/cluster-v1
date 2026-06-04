@@ -5,8 +5,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Set dummy API key before importing main
-os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-key"
+# Set dummy Groq API key before importing main
+os.environ["GROQ_API_KEY"] = "test-groq-key"
 
 from main import app
 
@@ -38,12 +38,23 @@ def test_build_system_prompt():
     prompt = build_system_prompt("Alice", {"role": "Sales"}, "")
     assert "Alice" in prompt
     assert "Sales" in prompt
+    assert "do not guess from memory" in prompt
 
 
 def test_build_system_prompt_with_memory():
     from prompts import build_system_prompt
     prompt = build_system_prompt("Bob", {}, "Remember: prefers email")
     assert "Remember: prefers email" in prompt
+
+
+def test_build_system_prompt_includes_personality_mode():
+    from prompts import build_system_prompt
+
+    prompt = build_system_prompt("Casey", {"Personality selection": "Analyst (Data-driven)"}, "")
+
+    assert "Analyst mode" in prompt
+    assert "evidence-first" in prompt
+    assert "Groq-powered assistant" in prompt
 
 
 def test_build_cluster_system_prompt_includes_workspace_context_and_rules():

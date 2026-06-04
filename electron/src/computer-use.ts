@@ -1,7 +1,8 @@
 import { BrowserWindow, desktopCapturer, screen } from 'electron'
-import Anthropic from '@anthropic-ai/sdk'
+// Use global fetch available in recent Node/Electron runtimes
 
 let abortSignal = false
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1'
 
 export function stopComputerUse() {
   abortSignal = true
@@ -145,6 +146,18 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+function extractJsonObject(text: string): Record<string, any> | null {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
 // ─── Computer Use Loop ────────────────────────────────────────────────────────
 
 export async function runComputerUse(
@@ -153,8 +166,6 @@ export async function runComputerUse(
   apiKey: string,
 ): Promise<string> {
   abortSignal = false
-  const client = new Anthropic({ apiKey })
-  const { width, height } = screen.getPrimaryDisplay().size
 
   const sendUpdate = (status: string, action?: string) =>
     win.webContents.send('computer-use:update', { status, action })
@@ -162,11 +173,29 @@ export async function runComputerUse(
   const sendScreenshot = (dataUrl: string) =>
     win.webContents.send('computer-use:screenshot', dataUrl)
 
-  type MessageContent = Anthropic.Beta.BetaContentBlockParam | { type: 'tool_result'; tool_use_id: string; content: any }
+  const model = 'llama-3.2-90b-vision-preview'
+  const systemPrompt = [
+    'You are Cluster\'s desktop automation agent.',
+    'Inspect the screenshot and return exactly one JSON object.',
+    'Use this schema:',
+    '{"action":"left_click|right_click|middle_click|double_click|mouse_move|left_click_drag|type|key|wait|pause|scroll|screenshot|finish","input":{},"status":"continue|done","result":"optional final text"}',
+    'Coordinate-based actions must include coordinate arrays in pixels.',
+    'If you need another view, return {"action":"screenshot","status":"continue"}.',
+    'When the task is complete, return {"action":"finish","status":"done","result":"..."}.',
+    'Do not include markdown fences or extra text.',
+  ].join(' ')
 
   const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [
-    { role: 'user', content: task },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: `Task: ${task}` },
+        { type: 'image_url', image_url: { url: await captureScreen() } },
+      ],
+    },
   ]
+
+  sendScreenshot((messages[0].content as Array<{ type: string; image_url?: { url: string } }>).find((part) => part.type === 'image_url')!.image_url!.url)
 
   let result = 'Task completed.'
   const MAX_ITERATIONS = 25
@@ -179,70 +208,95 @@ export async function runComputerUse(
 
     sendUpdate('thinking')
 
-    const response = await (client.beta.messages as any).create({
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
-      tools: [
-        {
-          type: 'computer_20250124',
-          name: 'computer',
-          display_width_px: width,
-          display_height_px: height,
-          display_number: 1,
-        },
-      ],
-      messages,
-      betas: ['computer-use-2025-01-24'],
-    })
-
-    if (response.stop_reason === 'end_turn') {
-      const textBlock = response.content.find((b: any) => b.type === 'text')
-      result = textBlock?.text ?? 'Task completed.'
-      break
-    }
-
-    if (response.stop_reason !== 'tool_use') break
-
-    // Process tool calls
-    const toolResults: MessageContent[] = []
-
-    for (const block of response.content as any[]) {
-      if (block.type !== 'tool_use') continue
-      const actionInput = block.input as Record<string, any>
-      const action = actionInput.action as string
-
-      sendUpdate('acting', action)
-
-      if (action === 'screenshot') {
-        const screenshot = await captureScreen()
-        sendScreenshot(screenshot)
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/png',
-                data: screenshot.replace(/^data:image\/png;base64,/, ''),
-              },
-            },
-          ],
-        })
+    // Build a simple prompt string for Groq from system + messages
+    const parts: string[] = []
+    parts.push(`SYSTEM: ${systemPrompt}`)
+    for (const m of messages) {
+      if (Array.isArray(m.content)) {
+        const contentText = m.content
+          .map((p: any) => (typeof p === 'string' ? p : p?.text ?? (p?.image_url?.url ? `[IMAGE] ${p.image_url.url}` : '')))
+          .join(' ')
+        parts.push(`${m.role.toUpperCase()}: ${contentText}`)
       } else {
-        await executeAction(action, actionInput)
-        await sleep(300) // brief pause after each action
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: `Action "${action}" executed successfully.`,
-        })
+        parts.push(`${m.role.toUpperCase()}: ${String(m.content)}`)
       }
     }
 
-    messages.push({ role: 'assistant', content: response.content })
-    messages.push({ role: 'user', content: toolResults })
+    const prompt = parts.join('\n')
+
+    const resp = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 1024,
+      }),
+    })
+    const responseText = await resp.text()
+
+    if (!resp.ok) {
+      throw new Error(`Groq API error ${resp.status}: ${responseText.slice(0, 500)}`)
+    }
+
+    const data = JSON.parse(responseText)
+    const rawText = String(data?.choices?.[0]?.message?.content ?? '')
+
+    const plan = extractJsonObject(rawText)
+    if (!plan) {
+      result = rawText.trim() || 'Task completed.'
+      break
+    }
+
+    const action = String(plan.action ?? '').trim()
+    const actionInput = (plan.input ?? {}) as Record<string, any>
+
+    if (plan.status === 'done' || action === 'finish') {
+      result = String(plan.result ?? actionInput.result ?? rawText).trim() || 'Task completed.'
+      break
+    }
+
+    if (!action) {
+      result = 'Task completed.'
+      break
+    }
+
+    sendUpdate('acting', action)
+
+    if (action === 'screenshot') {
+      const screenshot = await captureScreen()
+      sendScreenshot(screenshot)
+      messages.push({ role: 'assistant', content: rawText })
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Screenshot captured. Continue with the next action.' },
+          { type: 'image_url', image_url: { url: screenshot } },
+        ],
+      })
+      continue
+    }
+
+    await executeAction(action, actionInput)
+    await sleep(300)
+
+    const nextScreenshot = await captureScreen()
+    sendScreenshot(nextScreenshot)
+
+    messages.push({ role: 'assistant', content: rawText })
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: `Executed ${action}. Continue from the updated screenshot.` },
+        { type: 'image_url', image_url: { url: nextScreenshot } },
+      ],
+    })
   }
 
   return result

@@ -107,7 +107,7 @@ export default function CredentialsPage() {
           </button>
         </div>
 
-        <div className="mb-6 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_42%),linear-gradient(180deg,rgba(15,18,26,0.98),rgba(9,11,16,0.98))] p-5 shadow-[0_18px_55px_rgba(0,0,0,0.28)]">
+        <div className="mb-6 rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_55px_rgba(0,0,0,0.28)]">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0 space-y-2">
               <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/55">
@@ -138,7 +138,7 @@ export default function CredentialsPage() {
               ) : null}
               <button
                 onClick={handleConnectGoogle}
-                className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-cyan-400 to-emerald-400 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(56,189,248,0.28)] transition-transform hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(56,189,248,0.36)]"
+                className="inline-flex items-center justify-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(56,189,248,0.28)] transition-transform hover:-translate-y-0.5 hover:bg-accent-hover hover:shadow-[0_18px_36px_rgba(56,189,248,0.36)]"
               >
                 {googleConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
               </button>

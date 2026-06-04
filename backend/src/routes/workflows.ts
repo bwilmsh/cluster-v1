@@ -8,10 +8,18 @@ export const workflowsRouter = Router()
 workflowsRouter.get('/', async (_req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const workflows = await prisma.workflow.findMany({
-      where: { userId: user.id },
-      orderBy: { updatedAt: 'desc' },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const workflows = workflowDelegate?.findMany
+      ? await workflowDelegate.findMany({
+          where: { userId: user.id },
+          orderBy: { updatedAt: 'desc' },
+        })
+      : await prisma.$queryRaw`
+          SELECT *
+          FROM "Workflow"
+          WHERE "userId" = ${user.id}
+          ORDER BY "updatedAt" DESC
+        `
     res.json(workflows)
   } catch (err) {
     console.error(err)
@@ -23,9 +31,14 @@ workflowsRouter.get('/', async (_req: Request, res: Response) => {
 workflowsRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const workflow = await prisma.workflow.findFirst({
-      where: { id: req.params.id, userId: user.id },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const workflow = workflowDelegate?.findFirst
+      ? await workflowDelegate.findFirst({
+          where: { id: req.params.id, userId: user.id },
+        })
+      : await prisma.$queryRaw<Array<Record<string, unknown>>>
+          `SELECT * FROM "Workflow" WHERE id = ${req.params.id} AND "userId" = ${user.id} LIMIT 1`
+          .then((rows) => rows[0] ?? null)
     if (!workflow) return res.status(404).json({ error: 'Not found' })
     res.json(workflow)
   } catch (err) {
@@ -63,9 +76,14 @@ workflowsRouter.post('/', async (req: Request, res: Response) => {
 workflowsRouter.put('/:id', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const existing = await prisma.workflow.findFirst({
-      where: { id: req.params.id, userId: user.id },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const existing = workflowDelegate?.findFirst
+      ? await workflowDelegate.findFirst({
+          where: { id: req.params.id, userId: user.id },
+        })
+      : await prisma.$queryRaw<Array<Record<string, unknown>>>
+          `SELECT * FROM "Workflow" WHERE id = ${req.params.id} AND "userId" = ${user.id} LIMIT 1`
+          .then((rows) => rows[0] ?? null)
     if (!existing) return res.status(404).json({ error: 'Not found' })
 
     const { name, description, nodes, edges, status } = req.body
@@ -92,9 +110,14 @@ workflowsRouter.put('/:id', async (req: Request, res: Response) => {
 workflowsRouter.post('/:id/run', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const existing = await prisma.workflow.findFirst({
-      where: { id: req.params.id, userId: user.id },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const existing = workflowDelegate?.findFirst
+      ? await workflowDelegate.findFirst({
+          where: { id: req.params.id, userId: user.id },
+        })
+      : await prisma.$queryRaw<Array<Record<string, unknown>>>
+          `SELECT * FROM "Workflow" WHERE id = ${req.params.id} AND "userId" = ${user.id} LIMIT 1`
+          .then((rows) => rows[0] ?? null)
     if (!existing) return res.status(404).json({ error: 'Not found' })
 
     // Fire async — don't wait, just confirm it started
@@ -110,16 +133,30 @@ workflowsRouter.post('/:id/run', async (req: Request, res: Response) => {
 workflowsRouter.get('/:id/runs', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const existing = await prisma.workflow.findFirst({
-      where: { id: req.params.id, userId: user.id },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const existing = workflowDelegate?.findFirst
+      ? await workflowDelegate.findFirst({
+          where: { id: req.params.id, userId: user.id },
+        })
+      : await prisma.$queryRaw<Array<Record<string, unknown>>>
+          `SELECT * FROM "Workflow" WHERE id = ${req.params.id} AND "userId" = ${user.id} LIMIT 1`
+          .then((rows) => rows[0] ?? null)
     if (!existing) return res.status(404).json({ error: 'Not found' })
 
-    const runs = await prisma.workflowRun.findMany({
-      where: { workflowId: req.params.id },
-      orderBy: { startedAt: 'desc' },
-      take: 20,
-    })
+    const runDelegate = (prisma as any).workflowRun
+    const runs = runDelegate?.findMany
+      ? await runDelegate.findMany({
+          where: { workflowId: req.params.id },
+          orderBy: { startedAt: 'desc' },
+          take: 20,
+        })
+      : await prisma.$queryRaw`
+          SELECT *
+          FROM "WorkflowRun"
+          WHERE "workflowId" = ${req.params.id}
+          ORDER BY "startedAt" DESC
+          LIMIT 20
+        `
     res.json(runs)
   } catch (err) {
     console.error(err)
@@ -131,9 +168,14 @@ workflowsRouter.get('/:id/runs', async (req: Request, res: Response) => {
 workflowsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const user = await getDefaultUser()
-    const existing = await prisma.workflow.findFirst({
-      where: { id: req.params.id, userId: user.id },
-    })
+    const workflowDelegate = (prisma as any).workflow
+    const existing = workflowDelegate?.findFirst
+      ? await workflowDelegate.findFirst({
+          where: { id: req.params.id, userId: user.id },
+        })
+      : await prisma.$queryRaw<Array<Record<string, unknown>>>
+          `SELECT * FROM "Workflow" WHERE id = ${req.params.id} AND "userId" = ${user.id} LIMIT 1`
+          .then((rows) => rows[0] ?? null)
     if (!existing) return res.status(404).json({ error: 'Not found' })
 
     await prisma.workflow.delete({ where: { id: req.params.id } })

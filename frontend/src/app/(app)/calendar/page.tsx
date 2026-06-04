@@ -1,5 +1,11 @@
-import { ClusterDashboard } from '@/components/ClusterDashboard'
+export const dynamic = 'force-dynamic'
 
-export default function CalendarPage() {
-  return <ClusterDashboard />
+import { WeekView } from '@/components/Calendar'
+
+export default function CalendarPage({ showDeleteAllEvents = true }: { showDeleteAllEvents?: boolean }) {
+  return (
+    <div className="h-full">
+      <WeekView showDeleteAllEvents={showDeleteAllEvents} />
+    </div>
+  )
 }

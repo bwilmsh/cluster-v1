@@ -1,10 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { api } from '@/lib/api'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const eAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null
 const isElectron = !!eAPI
+
+type GoogleIntegrationInfo = {
+  accountEmail?: string | null
+  accountName?: string | null
+  expiresAt?: string | null
+}
 
 export default function SettingsPage() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
@@ -14,26 +21,49 @@ export default function SettingsPage() {
   const [apiKeySet, setApiKeySet] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeySaved, setApiKeySaved] = useState(false)
+  const [googleConnected, setGoogleConnected] = useState(false)
+  const [googleIntegration, setGoogleIntegration] = useState<GoogleIntegrationInfo | null>(null)
+  const [googleLoading, setGoogleLoading] = useState(true)
 
   useEffect(() => {
-    if (!eAPI) return
+    if (eAPI) {
+      eAPI.app.version().then(setAppVersion)
+      eAPI.computerUse.checkPermission().then(setHasComputerPermission)
+      eAPI.settings.isApiKeySet().then(setApiKeySet)
 
-    eAPI.app.version().then(setAppVersion)
-    eAPI.computerUse.checkPermission().then(setHasComputerPermission)
-    eAPI.settings.isApiKeySet().then(setApiKeySet)
+      const unsubAvail = eAPI.app.onUpdateAvailable((info: any) => {
+        setUpdateStatus('available')
+        setUpdateInfo(info)
+      })
+      const unsubDownloaded = eAPI.app.onUpdateDownloaded((info: any) => {
+        setUpdateStatus('downloaded')
+        setUpdateInfo(info)
+      })
 
-    const unsubAvail = eAPI.app.onUpdateAvailable((info: any) => {
-      setUpdateStatus('available')
-      setUpdateInfo(info)
-    })
-    const unsubDownloaded = eAPI.app.onUpdateDownloaded((info: any) => {
-      setUpdateStatus('downloaded')
-      setUpdateInfo(info)
-    })
+      return () => {
+        unsubAvail?.()
+        unsubDownloaded?.()
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    setGoogleLoading(true)
+    api.oauth.googleStatus()
+      .catch(() => ({ connected: false, integration: null }))
+      .then((status) => {
+        if (cancelled) return
+        setGoogleConnected(Boolean(status.connected))
+        setGoogleIntegration(status.integration)
+      })
+      .finally(() => {
+        if (!cancelled) setGoogleLoading(false)
+      })
 
     return () => {
-      unsubAvail?.()
-      unsubDownloaded?.()
+      cancelled = true
     }
   }, [])
 
@@ -47,6 +77,10 @@ export default function SettingsPage() {
   async function grantComputerPermission() {
     const granted = await eAPI.computerUse.requestPermission()
     setHasComputerPermission(granted)
+  }
+
+  async function connectGoogle() {
+    window.location.href = '/api/oauth/google/start'
   }
 
   function checkForUpdates() {
@@ -64,11 +98,49 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-6">
+        <div className="rounded-2xl border border-white/8 bg-white/[0.04] p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0 space-y-2">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/55">
+                Google Calendar + Gmail
+              </div>
+              <p className="text-sm text-white/72">
+                {googleLoading
+                  ? 'Checking your Google connection...'
+                  : googleConnected
+                    ? 'Google is connected and Gmail send permission is enabled for scheduled emails and calendar actions.'
+                    : 'Connect Google here to enable calendar actions and scheduled email sending.'}
+              </p>
+              {!googleLoading && googleConnected ? (
+                <p className="text-xs text-white/38">
+                  {googleIntegration?.accountName || googleIntegration?.accountEmail
+                    ? `${googleIntegration.accountName ?? 'Google account'}${googleIntegration.accountEmail ? ` · ${googleIntegration.accountEmail}` : ''}`
+                    : 'Connected account'}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-3">
+              {!googleLoading && googleConnected ? (
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3.5 py-2 text-sm font-medium text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                  Connected
+                </span>
+              ) : null}
+              <button
+                onClick={connectGoogle}
+                className="inline-flex items-center justify-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(56,189,248,0.28)] transition-transform hover:-translate-y-0.5 hover:bg-accent-hover hover:shadow-[0_18px_36px_rgba(56,189,248,0.36)]"
+              >
+                {googleConnected ? 'Reconnect Google' : 'Connect Google'}
+              </button>
+            </div>
+          </div>
+        </div>
 
         {/* API Key — shown in Electron (not found via .env in installed app) */}
         {isElectron && (
           <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
-            <h2 className="text-white font-medium mb-1">Anthropic API Key</h2>
+            <h2 className="text-white font-medium mb-1">Groq API Key</h2>
             <p className="text-white/40 text-xs mb-4">
               Required for all AI features. Your key is stored locally on this device only.
             </p>
@@ -83,7 +155,7 @@ export default function SettingsPage() {
                 type="password"
                 value={apiKeyInput}
                 onChange={(e) => { setApiKeyInput(e.target.value); setApiKeySaved(false) }}
-                placeholder="sk-ant-..."
+                placeholder="gsk_..."
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/20 focus:outline-none focus:border-white/20 transition-colors font-mono"
               />
               <button
@@ -193,7 +265,7 @@ export default function SettingsPage() {
                 <div className="space-y-2 text-xs text-white/30">
                   <div className="flex items-start gap-2">
                     <span className="text-green-400 mt-0.5">✓</span>
-                    <span>Uses Claude's computer use API — safe and audited</span>
+                    <span>Uses Groq-powered computer control — safe and audited</span>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-green-400 mt-0.5">✓</span>

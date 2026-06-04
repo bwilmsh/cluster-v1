@@ -1,0 +1,7 @@
+-- AlterTable Event
+ALTER TABLE "Event" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'todo';
+ALTER TABLE "Event" ADD COLUMN "priority" TEXT NOT NULL DEFAULT 'medium';
+ALTER TABLE "Event" ADD COLUMN "reminderTime" TIMESTAMP(3);
+ALTER TABLE "Event" ADD COLUMN "reminderSent" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Event" ADD COLUMN "assignee" TEXT;
+ALTER TABLE "Event" ADD COLUMN "tags" TEXT[] DEFAULT ARRAY[]::TEXT[];

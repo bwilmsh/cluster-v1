@@ -12,7 +12,6 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.54.0",
     "dotenv": "^17.0.0",
     "electron-updater": "^6.3.9"
   },

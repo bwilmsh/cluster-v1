@@ -21,8 +21,11 @@ model User {
   oauthConfigs    OAuthConfig[]
   widgets         Widget[]
   goals           Goal[]
+  habits          Habit[]
+  dueDates        DueDate[]
   webCredentials  WebCredential[]
   automations      Automation[]
+  scheduledEmails  ScheduledEmail[]
   browseActivities BrowseActivity[]
   workflows        Workflow[]
 }
@@ -245,10 +248,115 @@ model Goal {
   userId          String
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   goalText        String
+  deadline        DateTime?
   isActive        Boolean  @default(true)
   visibleAgentIds Json     @default("[]")
+  autoRun         DueDateAutoRun?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model Habit {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  notes         String?
+  frequency     HabitFrequency @default(DAILY)
+  idealTime     HabitIdealTime @default(MORNING)
+  timeRangeStart String?
+  timeRangeEnd  String?
+  daysOfWeek    String[] @default([])
+  isActive      Boolean  @default(true)
+  autoReschedule Boolean @default(true)
+  keywords      String[] @default([])
+  priorityLevel HabitPriority @default(MEDIUM)
+  color         String?
+  streak        Int      @default(0)
+  longestStreak  Int      @default(0)
+  priority      Int      @default(3)
+  rrule         String?   // RFC5545 rrule string for complex recurrence patterns
+  cadence       String?   // friendly cadence like "daily" | "weekly" (fallback)
+  timeOfDay     String?   // window start time like "08:30:00" (optional)
+  endTime       String?   // window end time like "09:00:00"
+  durationMinutes Int      @default(30)
+  timezone      String?   // IANA timezone identifier
+  active        Boolean   @default(true)
+  materialize   Boolean   @default(true) // whether to create Event occurrences
+  showAsBusy    Boolean   @default(true)
+  hideDetails   Boolean   @default(false)
+  scheduleReason String?
+  skippedDates  Json      @default("[]") // ISO date strings (YYYY-MM-DD) skipped for this habit
+  lastCompleted DateTime?
+  events        Event[]
+  entries       HabitEntry[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum HabitFrequency {
+  DAILY
+  WEEKDAYS
+  WEEKLY
+  CUSTOM
+}
+
+enum HabitIdealTime {
+  MORNING
+  AFTERNOON
+  EVENING
+}
+
+enum HabitPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum DueDatePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DueDateStatus {
+  PENDING
+  COMPLETED
+  OVERDUE
+}
+
+enum DueDateCategory {
+  ASSIGNMENT
+  EXAM
+  WORK
+  PERSONAL
+}
+
+enum HabitEntryStatus {
+  SCHEDULED
+  COMPLETED
+  SKIPPED
+  RESCHEDULED
+}
+
+model HabitEntry {
+  id              String            @id @default(cuid())
+  habitId         String
+  habit           Habit             @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  scheduledDate   DateTime
+  scheduledStart  DateTime
+  scheduledEnd    DateTime
+  status          HabitEntryStatus  @default(SCHEDULED)
+  wasRescheduled  Boolean           @default(false)
+  completedAt     DateTime?
+  event           Event?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([habitId, scheduledDate])
+  @@index([habitId, scheduledDate])
 }
 
 model Event {
@@ -259,13 +367,75 @@ model Event {
   end_time        DateTime?
   location        String?
   google_event_id String?
-  itemType        String?   // "event" | "task" | "appointment"
+  itemType        String?   // "event" | "task" | "appointment" | "habit"
   status          String    @default("todo") // "todo" | "in-progress" | "done" | custom
   priority        String    @default("medium") // "low" | "medium" | "high"
   reminderTime    DateTime?
   reminderSent    Boolean   @default(false)
   assignee        String?
   tags            String[]  @default([])
+  habitId         String?
+  habit           Habit?    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  habitOccurrenceAt DateTime?
+  habitLocked     Boolean   @default(false)
+  showAsBusy      Boolean   @default(true)
+  hideDetails     Boolean   @default(false)
+  scheduleReason  String?
+  habitEntryId    String?   @unique
+  habitEntry      HabitEntry? @relation(fields: [habitEntryId], references: [id], onDelete: SetNull)
+  autoRun         DueDateAutoRun?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
+  @@index([habitId])
+  @@index([habitOccurrenceAt])
+}
+
+model DueDateAutoRun {
+  id          String   @id @default(cuid())
+  eventId     String?  @unique
+  event       Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  goalId      String?  @unique
+  goal        Goal?    @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  enabled     Boolean  @default(false)
+  actionType  String   // "sendEmail" | "createCalendarEvent" | "markTaskComplete" | "sendNotification"
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ScheduledEmail {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  to             String
+  subject        String
+  body           String
+  sendAt         DateTime
+  status         String   @default("scheduled") // "scheduled" | "sending" | "sent" | "failed"
+  sentAt         DateTime?
+  gmailMessageId String?
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, status, sendAt])
+  @@index([sendAt])
+}
+
+model DueDate {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     DateTime
+  dueTime     String
+  priority    DueDatePriority  @default(MEDIUM)
+  status      DueDateStatus    @default(PENDING)
+  category    DueDateCategory  @default(PERSONAL)
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, dueDate])
+  @@index([userId, status])
 }

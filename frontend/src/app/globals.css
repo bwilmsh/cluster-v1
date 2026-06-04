@@ -3,84 +3,137 @@
 @tailwind utilities;
 
 :root,
+:root[data-theme='dark'],
 :root.dark-mode {
   color-scheme: dark;
-
-  /* Backgrounds */
-  --bg-primary: #151b1f;
-  --bg-secondary: #1d2429;
-  --bg-tertiary: #27323a;
-  --bg-hover: #2e3942;
-
-  /* Text */
-  --text-primary: #f1f4f6;
-  --text-secondary: #b9c3ca;
-  --text-tertiary: #8b979f;
-
-  /* Accent */
-  --accent: #4fb8a8;
-  --accent-hover: #3c9a8c;
-  --accent-muted: rgba(79, 184, 168, 0.22);
-
-  /* Borders */
-  --border: #33414b;
-  --border-strong: #4a5964;
-
-  /* Status */
-  --success: #22c55e;
+  --bg-primary: #000000;
+  --bg-secondary: #050505;
+  --bg-tertiary: #0a0a0a;
+  --bg-hover: #111111;
+  --surface: #050505;
+  --surface-elevated: #0a0a0a;
+  --surface-muted: #0d0d0d;
+  --sidebar-bg: #000000;
+  --text-primary: #ffffff;
+  --text-secondary: #c7c7c7;
+  --text-tertiary: #7a7a7a;
+  --text-on-accent: #ffffff;
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --accent-light: rgba(13, 148, 136, 0.16);
+  --accent-muted: rgba(13, 148, 136, 0.22);
+  --success: #0d9488;
   --warning: #f59e0b;
-  --error: #ef4444;
-}
-
-:root.light-mode {
-  color-scheme: light;
-
-  /* Backgrounds */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8f8f8;
-  --bg-tertiary: #f0f0f0;
-  --bg-hover: #e8e8e8;
-
-  /* Text */
-  --text-primary: #1a1a1a;
-  --text-secondary: #666666;
-  --text-tertiary: #999999;
-
-  /* Accent */
-  --accent: #2c9f8d;
-  --accent-hover: #247f71;
-  --accent-muted: rgba(44, 159, 141, 0.14);
-
-  /* Borders */
-  --border: #e0e0e0;
-  --border-strong: #d0d0d0;
-
-  /* Status */
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --error: #ef4444;
-}
-
-/* ── Design system v2 — MUST appear after :root.light-mode above ─ */
-:root, :root.dark-mode {
-  --accent-indigo: #6366f1;
-  --accent-indigo-hover: #4f52d4;
+  --danger: #f87171;
+  --border: #1a1a1a;
+  --border-strong: #262626;
+  --shadow-color: 0, 0, 0;
+  --overlay: rgba(0, 0, 0, 0.82);
+  --overlay-strong: rgba(0, 0, 0, 0.96);
+  --accent-soft: rgba(13, 148, 136, 0.12);
+  --accent-soft-strong: rgba(13, 148, 136, 0.2);
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger-border: rgba(248, 113, 113, 0.38);
+  --success-soft: rgba(13, 148, 136, 0.12);
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --info-soft: rgba(96, 165, 250, 0.12);
+  --calendar-google-bg: rgba(13, 148, 136, 0.12);
+  --calendar-google-border: #0d9488;
+  --calendar-habit-bg: rgba(13, 148, 136, 0.08);
+  --calendar-habit-border: #0d9488;
+  --calendar-task-bg: rgba(13, 148, 136, 0.06);
+  --calendar-task-border: #0d9488;
+  --calendar-line: rgba(255, 255, 255, 0.12);
+  --calendar-line-strong: rgba(255, 255, 255, 0.2);
+  --agent-1: #0d9488;
+  --agent-2: #0d9488;
+  --agent-3: #f59e0b;
+  --agent-4: #f87171;
+  --agent-5: #0d9488;
+  --agent-6: #0d9488;
+  --agent-7: #0d9488;
+  --agent-8: #0d9488;
+  --bg: var(--bg-primary);
+  --card: var(--surface);
+  --glass: var(--surface-muted);
+  --bg-secondary-alt: var(--surface-elevated);
+  --bg-primary-alt: var(--bg-primary);
+  --text-muted: var(--text-tertiary);
+  --error: var(--danger);
+  --accent-indigo: var(--accent);
+  --accent-indigo-hover: var(--accent-hover);
   --glass-bg: rgba(255, 255, 255, 0.04);
   --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-blur: 12px;
-  --glow-teal: rgba(79, 184, 168, 0.12);
-  --glow-indigo: rgba(99, 102, 241, 0.12);
+  --glass-blur: 0;
+  --glow-teal: rgba(13, 148, 136, 0.12);
+  --glow-indigo: rgba(13, 148, 136, 0.12);
   --dot-grid: rgba(255, 255, 255, 0.04);
 }
 
+:root[data-theme='light'],
 :root.light-mode {
-  --accent-indigo: #4f46e5;
-  --accent-indigo-hover: #3730a3;
+  color-scheme: light;
+  --bg-primary: #ffffff;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f3f4f6;
+  --bg-hover: #ecfdf5;
+  --surface: #ffffff;
+  --surface-elevated: #f8faf9;
+  --surface-muted: #f1f5f4;
+  --sidebar-bg: #ffffff;
+  --text-primary: #000000;
+  --text-secondary: #404040;
+  --text-tertiary: #737373;
+  --text-on-accent: #ffffff;
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --accent-light: rgba(13, 148, 136, 0.08);
+  --accent-muted: rgba(13, 148, 136, 0.14);
+  --success: #0d9488;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --shadow-color: 0, 0, 0;
+  --overlay: rgba(255, 255, 255, 0.82);
+  --overlay-strong: rgba(255, 255, 255, 0.96);
+  --accent-soft: rgba(13, 148, 136, 0.12);
+  --accent-soft-strong: rgba(13, 148, 136, 0.18);
+  --danger-soft: rgba(220, 38, 38, 0.12);
+  --danger-border: rgba(220, 38, 38, 0.3);
+  --success-soft: rgba(13, 148, 136, 0.12);
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --info-soft: rgba(59, 130, 246, 0.12);
+  --calendar-google-bg: rgba(13, 148, 136, 0.08);
+  --calendar-google-border: #0d9488;
+  --calendar-habit-bg: rgba(13, 148, 136, 0.06);
+  --calendar-habit-border: #0d9488;
+  --calendar-task-bg: rgba(13, 148, 136, 0.04);
+  --calendar-task-border: #0d9488;
+  --calendar-line: rgba(0, 0, 0, 0.12);
+  --calendar-line-strong: rgba(0, 0, 0, 0.18);
+  --agent-1: #0d9488;
+  --agent-2: #0d9488;
+  --agent-3: #f59e0b;
+  --agent-4: #dc2626;
+  --agent-5: #0d9488;
+  --agent-6: #0d9488;
+  --agent-7: #0d9488;
+  --agent-8: #0d9488;
+  --bg: var(--bg-primary);
+  --card: var(--surface);
+  --glass: var(--surface-muted);
+  --bg-secondary-alt: var(--surface-elevated);
+  --bg-primary-alt: var(--bg-primary);
+  --text-muted: var(--text-tertiary);
+  --error: var(--danger);
+  --accent-indigo: var(--accent);
+  --accent-indigo-hover: var(--accent-hover);
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-border: rgba(0, 0, 0, 0.08);
-  --glass-blur: 12px;
-  --glow-teal: rgba(44, 159, 141, 0.18);
-  --glow-indigo: rgba(79, 70, 229, 0.18);
+  --glass-blur: 0;
+  --glow-teal: rgba(13, 148, 136, 0.12);
+  --glow-indigo: rgba(13, 148, 136, 0.12);
   --dot-grid: rgba(0, 0, 0, 0.04);
 }
 
@@ -108,24 +161,14 @@
 }
 
 .shimmer-text {
-  background: linear-gradient(
-    90deg,
-    var(--text-primary) 0%,
-    var(--accent) 40%,
-    var(--accent-indigo) 60%,
-    var(--text-primary) 100%
-  );
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;  /* Firefox fallback */
-  background-clip: text;
-  animation: shimmer 3s linear infinite;
+  color: var(--accent);
+  -webkit-text-fill-color: currentColor;
+  animation: none;
 }
 
 .dot-grid-bg {
-  background-image: radial-gradient(var(--dot-grid) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: none;
+  background-size: auto;
 }
 
 .section-accent-bar {
@@ -158,6 +201,7 @@
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
+  min-height: 100vh;
 }
 
 ::-webkit-scrollbar {
@@ -178,6 +222,113 @@ body {
   min-height: 0;
 }
 
+/* Ask AI bar in calendar */
+.cluster-ask-ai-bar {
+  position: absolute; /* overlay the calendar */
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(var(--shadow-color), 0.12);
+  z-index: 80;
+  width: min(86%, 640px);
+  max-width: 640px;
+  height: 44px; /* slightly taller for input */
+}
+.cluster-ask-ai-bar input { flex: 1; padding: 8px 12px; border-radius: 999px; border: none; background: transparent; color: var(--text-primary); font-size: 14px }
+.cluster-ask-ai-button {
+  background: var(--text-primary);
+  color: var(--surface);
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: none;
+  font-weight: 700;
+  height: 32px;
+  font-size: 13px;
+  min-width: 72px;
+}
+.cluster-ask-ai-button.is-streaming {
+  min-width: 140px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Highlighted event from AI query */
+.cluster-event-highlight {
+  box-shadow: 0 14px 36px rgba(13,148,136,0.18);
+  transform: translateY(-2px) scale(1.02);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.cluster-ai-popup {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  width: min(88vw, 420px);
+  background: var(--card);
+  color: var(--text-primary);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  z-index: 140;
+  box-shadow: 0 20px 40px rgba(var(--shadow-color), 0.12);
+  opacity: 0;
+  animation: clusterPopupFadeIn 180ms ease-out forwards;
+}
+
+.cluster-ai-popup.is-streaming {
+  border-color: var(--accent);
+}
+
+.cluster-ai-popup-response {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.cluster-ai-popup-caret {
+  display: inline-block;
+  margin-left: 2px;
+  animation: clusterCaretBlink 1s steps(1, end) infinite;
+}
+
+.cluster-ai-popup-error {
+  margin-top: 10px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+@keyframes clusterPopupFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes clusterCaretBlink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .cluster-dashboard-sidebar {
   border-right: 0.5px solid var(--border);
   padding: 20px;
@@ -186,23 +337,50 @@ body {
 }
 
 :root.dark-mode .cluster-dashboard-sidebar {
-  background:
-    radial-gradient(circle at 12% 6%, rgba(123, 221, 197, 0.16), transparent 48%),
-    radial-gradient(circle at 85% 16%, rgba(255, 199, 136, 0.08), transparent 36%),
-    linear-gradient(170deg, #222c33 0%, #161d22 70%);
+  background: var(--bg-secondary);
 }
 
 :root.light-mode .cluster-dashboard-sidebar {
-  background:
-    radial-gradient(circle at 12% 6%, rgba(91, 196, 171, 0.16), transparent 48%),
-    radial-gradient(circle at 85% 16%, rgba(255, 183, 109, 0.11), transparent 36%),
-    linear-gradient(170deg, #f6fbfb 0%, #f4f8f8 72%);
+  background: var(--bg-secondary);
 }
 
 .cluster-dashboard-sidebar h2 {
   margin: 0;
   font-size: 16px;
   font-weight: 650;
+}
+
+.cluster-sidebar-shell {
+  transition: width 180ms ease;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell {
+  width: 80px !important;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-brand,
+:root.cluster-sidebar-collapsed .cluster-sidebar-label,
+:root.cluster-sidebar-collapsed .cluster-sidebar-chat-label,
+:root.cluster-sidebar-collapsed .cluster-dashboard-sidebar h2,
+:root.cluster-sidebar-collapsed .cluster-sidebar-subtitle {
+  display: none;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell nav {
+  padding-inline: 10px;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell nav a,
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell .cluster-sidebar-chat-label {
+  justify-content: center;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell nav a {
+  padding-left: 0 !important;
+}
+
+:root.cluster-sidebar-collapsed .cluster-sidebar-shell .cluster-sidebar-brand + * {
+  opacity: 0;
 }
 
 .cluster-sidebar-subtitle {
@@ -409,17 +587,11 @@ body {
 }
 
 :root.dark-mode .cluster-dashboard-main {
-  background:
-    radial-gradient(circle at 86% 0%, rgba(123, 221, 197, 0.16), transparent 43%),
-    radial-gradient(circle at 5% 15%, rgba(255, 199, 136, 0.08), transparent 34%),
-    linear-gradient(180deg, #1a2329 0%, #12181d 54%);
+  background: var(--bg-primary);
 }
 
 :root.light-mode .cluster-dashboard-main {
-  background:
-    radial-gradient(circle at 86% 0%, rgba(123, 221, 197, 0.16), transparent 43%),
-    radial-gradient(circle at 5% 15%, rgba(255, 199, 136, 0.1), transparent 34%),
-    linear-gradient(180deg, #fcfdfc 0%, #f8fafa 54%);
+  background: var(--bg-primary);
 }
 
 .cluster-queue-intro {
@@ -449,11 +621,11 @@ body {
 }
 
 :root.dark-mode .cluster-lifestyle-card {
-  background: linear-gradient(170deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+  background: rgba(255, 255, 255, 0.04);
 }
 
 :root.light-mode .cluster-lifestyle-card {
-  background: linear-gradient(170deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7));
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .cluster-lifestyle-card h3 {
@@ -607,7 +779,7 @@ body {
 }
 
 .cluster-calendar-wrap {
-  border: 0.5px solid var(--border);
+  border: 0.5px solid var(--calendar-line);
   border-radius: 14px;
   padding: 20px;
   position: relative;
@@ -615,15 +787,11 @@ body {
 }
 
 :root.dark-mode .cluster-calendar-wrap {
-  background:
-    radial-gradient(circle at 20% 0%, rgba(123, 221, 197, 0.12), transparent 36%),
-    linear-gradient(180deg, rgba(30, 39, 46, 0.97) 0%, rgba(22, 29, 34, 0.97) 100%);
+  background: rgba(30, 39, 46, 0.97);
 }
 
 :root.light-mode .cluster-calendar-wrap {
-  background:
-    radial-gradient(circle at 20% 0%, rgba(123, 221, 197, 0.12), transparent 36%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 249, 248, 0.98) 100%);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .cluster-calendar-wrap-with-drawer {
@@ -652,18 +820,18 @@ body {
     transform 160ms ease,
     opacity 180ms ease;
   z-index: 70;
-  border: 0.5px solid var(--border);
+  border: 0.5px solid var(--calendar-line);
   border-radius: 14px;
   overflow: hidden;
 }
 
 :root.dark-mode .cluster-event-drawer {
-  background: linear-gradient(180deg, rgba(15, 20, 27, 0.98) 0%, rgba(10, 10, 10, 0.98) 100%);
+  background: rgba(15, 20, 27, 0.98);
   box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35);
 }
 
 :root.light-mode .cluster-event-drawer {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 250, 250, 0.98) 100%);
+  background: rgba(255, 255, 255, 0.98);
   box-shadow: -18px 0 40px rgba(0, 0, 0, 0.08);
 }
 
@@ -715,6 +883,13 @@ body {
 :root.dark-mode .cluster-event-drawer-close {
   background: rgba(255, 255, 255, 0.04);
 }
+
+/* Sidebar light-mode tweaks and account button styles */
+.cluster-sidebar-icon-btn { width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:transparent;display:inline-flex;align-items:center;justify-content:center;color:var(--text-secondary)}
+.cluster-sidebar-shell[style] { box-shadow: 0 6px 18px rgba(15,23,42,0.06); }
+.cluster-sidebar-shell .cluster-sidebar-brand { color: var(--text-primary); }
+.cluster-sidebar-shell .cluster-sidebar-label { color: var(--text-primary); }
+.cluster-sidebar-shell a:hover { background: var(--bg-hover); }
 
 :root.light-mode .cluster-event-drawer-close {
   background: rgba(0, 0, 0, 0.04);
@@ -769,7 +944,7 @@ body {
 
 .cluster-calendar .react-calendar__navigation button:hover:not(:disabled) {
   background: var(--bg-hover);
-  border-color: var(--border);
+  border-color: var(--calendar-line-strong);
 }
 
 /* Hide arrow navigation buttons but keep month/year button */
@@ -788,7 +963,7 @@ body {
   min-height: 76px;
   padding: 12px 10px 10px;
   font-size: 13px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--calendar-line);
   border-radius: 16px;
   color: var(--text-primary);
   transition:
@@ -808,7 +983,7 @@ body {
 .cluster-calendar .react-calendar__navigation button:hover,
 .cluster-calendar .react-calendar__tile:hover {
   background: var(--bg-hover);
-  border-color: var(--border-strong);
+  border-color: var(--calendar-line-strong);
 }
 
 .cluster-calendar .react-calendar__tile:disabled {
@@ -817,14 +992,14 @@ body {
 }
 
 .cluster-calendar .react-calendar__tile--active {
-  background: linear-gradient(180deg, var(--accent-muted), rgba(79, 184, 168, 0.28));
+  background: var(--accent-muted);
   border-color: rgba(79, 184, 168, 0.48);
   color: #fff;
   box-shadow: 0 10px 24px rgba(79, 184, 168, 0.14);
 }
 
 .cluster-calendar .react-calendar__tile--active:hover {
-  background: linear-gradient(180deg, rgba(79, 184, 168, 0.38), rgba(79, 184, 168, 0.24));
+  background: rgba(79, 184, 168, 0.34);
   box-shadow: 0 12px 28px rgba(79, 184, 168, 0.16);
 }
 
@@ -926,14 +1101,7 @@ body {
 
 .cluster-event-form select {
   appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-tertiary) 50%),
-    linear-gradient(135deg, var(--text-tertiary) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) calc(50% - 2px),
-    calc(100% - 12px) calc(50% - 2px);
-  background-size: 6px 6px, 6px 6px;
-  background-repeat: no-repeat;
+  background-image: none;
   padding-right: 30px;
 }
 
@@ -1121,6 +1289,326 @@ body {
   padding: 16px;
 }
 
+.cluster-week-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 12px 64px;
+}
+
+.cluster-week-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.cluster-week-toolbar-left,
+.cluster-week-toolbar-right,
+.cluster-week-nav-group,
+.cluster-week-stepper,
+.cluster-week-zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cluster-week-heading h1 {
+  margin: 2px 0 0;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  font-weight: 600;
+}
+
+.cluster-week-pill,
+.cluster-week-view-chip,
+.cluster-week-icon-button {
+  border: 0.5px solid var(--border);
+  border-radius: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+
+:root.light-mode .cluster-week-pill,
+:root.light-mode .cluster-week-view-chip,
+:root.light-mode .cluster-week-icon-button {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cluster-week-pill:hover,
+.cluster-week-view-chip:hover,
+.cluster-week-icon-button:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.cluster-week-icon-button {
+  width: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cluster-burger-icon {
+  width: 14px;
+  display: grid;
+  gap: 3px;
+}
+
+.cluster-burger-icon span {
+  display: block;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.cluster-week-view-chip {
+  min-width: 72px;
+}
+
+.cluster-week-mini-calendar-fab {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 40;
+}
+
+.cluster-week-mini-calendar-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 0.5px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+:root.light-mode .cluster-week-mini-calendar-button {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cluster-week-mini-calendar-button:hover,
+.cluster-week-mini-calendar-button:focus-visible {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.cluster-week-mini-calendar-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cluster-week-mini-calendar-popover {
+  position: absolute;
+  left: 0;
+  bottom: 48px;
+  width: 286px;
+  border: 0.5px solid var(--border);
+  border-radius: 18px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+}
+
+.cluster-week-mini-calendar-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cluster-week-mini-calendar-header span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.cluster-week-mini-calendar-header strong {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.cluster-week-mini-calendar {
+  width: 100%;
+  font-size: 12px;
+}
+
+.cluster-week-mini-calendar .react-calendar__navigation {
+  margin-bottom: 8px;
+}
+
+.cluster-week-mini-calendar .react-calendar__navigation button {
+  min-height: 32px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.cluster-week-mini-calendar .react-calendar__month-view__weekdays {
+  font-size: 10px;
+  margin-bottom: 6px;
+}
+
+.cluster-week-mini-calendar .react-calendar__month-view__days {
+  gap: 4px;
+}
+
+.cluster-week-mini-calendar .react-calendar__tile {
+  min-height: 30px;
+  padding: 4px 2px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.cluster-week-mini-calendar .react-calendar__month-view__days button:hover {
+  transform: none;
+}
+
+.cluster-week-mini-calendar .react-calendar__tile--active {
+  box-shadow: 0 8px 18px rgba(13, 148, 136, 0.18);
+}
+
+.cluster-week-frame {
+  flex: 1;
+  min-height: 0;
+  border: 0.5px solid var(--calendar-line);
+  border-radius: 20px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(var(--shadow-color), 0.06);
+  font-family: Inter, 'Helvetica Neue', system-ui, -apple-system, 'Segoe UI', Roboto, Arial;
+}
+
+:root.light-mode .cluster-week-frame {
+  background: #ffffff;
+  border-color: #e5e7eb;
+}
+
+:root.dark-mode .cluster-week-frame {
+  background: #0b0b0b;
+  border-color: #1f1f1f;
+}
+
+.cluster-week-header { background: var(--surface); }
+.cluster-week-day-head { color: var(--text-tertiary); }
+.cluster-week-day-number { color: var(--text-primary); }
+.cluster-week-hour-label { color: var(--text-tertiary); }
+
+/* Make grid lines very subtle */
+.cluster-week-day-column > .pointer-events-none { border-top-color: rgba(0,0,0,0.06) !important; }
+
+/* Event pill tweaks: rounded, white text, subtle shadow */
+.cluster-week-day-column [data-event="true"] {
+  border-radius: 8px !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px rgba(12,18,24,0.06) !important;
+  padding: 6px 8px !important;
+  font-size: 13px !important;
+}
+
+/* tighter grid lines */
+.cluster-week-day-column .pointer-events-none { opacity: 0.06 }
+
+/* Per-source event coloring: ensure events use the calendar palette and render solidly above the grid */
+.cluster-week-day-column [data-event="true"][data-source="google"] {
+  background: var(--calendar-google-bg) !important;
+  color: var(--text-primary) !important;
+  border-left-color: var(--calendar-google-border) !important;
+}
+.cluster-week-day-column [data-event="true"][data-source="task"] {
+  background: var(--calendar-task-bg) !important;
+  color: var(--text-primary) !important;
+  border-left-color: var(--calendar-task-border) !important;
+}
+.cluster-week-day-column [data-event="true"][data-source="habit"] {
+  background: var(--calendar-habit-bg) !important;
+  color: var(--text-primary) !important;
+  border-left-color: var(--calendar-habit-border) !important;
+}
+
+/* Make event backgrounds slightly more opaque when needed to avoid grid interference */
+.cluster-week-day-column [data-event="true"] {
+  background-blend-mode: normal !important;
+}
+
+.cluster-week-header {
+  min-height: 60px;
+}
+
+.cluster-week-time-gutter {
+  background: rgba(255, 255, 255, 0.01);
+  width: 64px;
+}
+
+.cluster-week-day-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 6px 8px;
+}
+
+.cluster-week-day-head.is-today {
+  background: var(--accent-soft);
+}
+
+.cluster-week-day-name {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.cluster-week-day-number {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  tab-size: 2;
+}
+
+.cluster-week-day-head.is-today .cluster-week-day-name,
+.cluster-week-day-head.is-today .cluster-week-day-number,
+.cluster-week-day-column.is-today .cluster-week-hour-label {
+  color: var(--accent);
+}
+
+.cluster-week-scroll {
+  min-height: 0;
+}
+
+.cluster-week-grid {
+  min-height: 0;
+  gap: 8px;
+}
+
+.cluster-week-day-column.is-today {
+  background: var(--accent-soft);
+}
+
+.cluster-week-hour-label {
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
 .cluster-month-shell {
   flex: 1;
   min-height: 0;
@@ -1133,15 +1621,11 @@ body {
 }
 
 :root.dark-mode .cluster-month-shell {
-  background:
-    radial-gradient(circle at top right, rgba(79, 184, 168, 0.12), transparent 28%),
-    linear-gradient(180deg, rgba(29, 36, 41, 0.96), rgba(23, 29, 34, 0.96));
+  background: rgba(29, 36, 41, 0.96);
 }
 
 :root.light-mode .cluster-month-shell {
-  background:
-    radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 250, 0.98));
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .cluster-month-intro {
@@ -1358,11 +1842,11 @@ body {
 }
 
 :root.dark-mode .cluster-day-calendar-shell {
-  background: linear-gradient(180deg, rgba(29, 36, 41, 0.95), rgba(23, 29, 34, 0.95));
+  background: rgba(29, 36, 41, 0.95);
 }
 
 :root.light-mode .cluster-day-calendar-shell {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 250, 0.96));
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .cluster-day-calendar-shell-with-drawer {
@@ -1529,11 +2013,11 @@ body {
 }
 
 :root.dark-mode .cluster-zoom-calendar-shell {
-  background: linear-gradient(180deg, rgba(29, 36, 41, 0.95), rgba(23, 29, 34, 0.95));
+  background: rgba(29, 36, 41, 0.95);
 }
 
 :root.light-mode .cluster-zoom-calendar-shell {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 250, 0.96));
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .cluster-zoom-slider-pane {
@@ -1756,7 +2240,7 @@ body {
     width: min(360px, calc(100vw - 24px));
     max-width: min(360px, calc(100vw - 24px));
     max-height: min(460px, calc(100vh - 24px));
-    border: 0.5px solid var(--border);
+    border: 0.5px solid var(--calendar-line);
     border-radius: 14px;
   }
 
@@ -1792,6 +2276,15 @@ body {
 
   .cluster-day-calendar-shell {
     grid-template-columns: 1fr;
+  }
+
+  .cluster-week-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .cluster-week-toolbar-right {
+    flex-wrap: wrap;
   }
 
   .cluster-day-calendar-shell-with-drawer {
@@ -1968,12 +2461,21 @@ body {
   color: var(--text-primary) !important;
 }
 
-:root.light-mode .bg-gradient-to-br {
-  background-image: linear-gradient(to bottom right, rgba(0, 0, 0, 0.02), rgba(0, 0, 0, 0.01)) !important;
+:root .bg-gradient-to-br,
+:root .bg-gradient-to-b,
+:root .bg-gradient-to-r,
+:root [class*='bg-[radial-gradient'],
+:root [class*='bg-[linear-gradient'] {
+  background-image: none !important;
+  background: var(--bg-secondary) !important;
 }
 
-:root.light-mode .bg-gradient-to-b {
-  background-color: var(--bg-primary) !important;
+:root.light-mode .bg-gradient-to-br,
+:root.light-mode .bg-gradient-to-b,
+:root.light-mode .bg-gradient-to-r,
+:root.light-mode [class*='bg-[radial-gradient'],
+:root.light-mode [class*='bg-[linear-gradient'] {
+  background: var(--bg-secondary) !important;
 }
 
 /* Specific element text colors */

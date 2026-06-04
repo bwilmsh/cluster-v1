@@ -4,7 +4,9 @@ import { getUserIntegrationContext } from '../lib/integrationContext'
 
 const PYTHON_URL = () => process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
-const jobs = new Map<string, cron.ScheduledTask>()
+type ScheduledTask = ReturnType<typeof cron.schedule>
+
+const jobs = new Map<string, ScheduledTask>()
 
 // ─── Build goal from workflow nodes ──────────────────────────────────────────
 //
@@ -191,11 +193,19 @@ export function syncWorkflow(w: { id: string; status: string; nodes: any }): voi
 export async function loadWorkflows(): Promise<void> {
   try {
     const user = await getDefaultUser()
-    const workflows = await prisma.workflow.findMany({
-      where: { userId: user.id, status: 'active' },
-      select: { id: true, status: true, nodes: true },
-    })
-    const scheduled = workflows.filter((w) => getCronFromWorkflow(w))
+    const workflowDelegate = (prisma as any).workflow
+    const workflows: Array<{ id: string; status: string; nodes: any }> = workflowDelegate?.findMany
+      ? await workflowDelegate.findMany({
+          where: { userId: user.id, status: 'active' },
+          select: { id: true, status: true, nodes: true },
+        })
+      : await prisma.$queryRaw<Array<{ id: string; status: string; nodes: any }>>`
+          SELECT id, status, nodes
+          FROM "Workflow"
+          WHERE "userId" = ${user.id}
+            AND status = 'active'
+        `
+    const scheduled = workflows.filter((workflow) => getCronFromWorkflow(workflow))
     workflows.forEach(syncWorkflow)
     console.log(`Workflows: registered ${scheduled.length} scheduled job(s)`)
   } catch (err) {

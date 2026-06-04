@@ -211,7 +211,7 @@ export function ComputerUsePanel({ agentName, onResult, onClose }: ComputerUsePa
                 </div>
               )}
               {/* Status overlay */}
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3">
+              <div className="absolute bottom-0 inset-x-0 bg-black/80 px-4 py-3">
                 <p className="text-white/70 text-xs font-mono">{status}</p>
               </div>
             </div>

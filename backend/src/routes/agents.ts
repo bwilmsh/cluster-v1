@@ -20,6 +20,30 @@ function getPythonUrl() {
   return process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 }
 
+async function postJsonWithTimeout(url: string, body: unknown, timeoutMs = 5000) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    return await response.json().catch(() => null)
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 type UpcomingAppointment = {
   id: number
   start_time: string
@@ -129,7 +153,9 @@ agentsRouter.post('/', async (req: Request, res: Response) => {
     })
     res.status(201).json(agent)
   } catch (err) {
-    res.status(500).json({ error: 'Internal server error' })
+    console.error('POST /api/agents failed:', err)
+    const message = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ error: 'Internal server error', detail: message })
   }
 })
 
@@ -201,7 +227,9 @@ agentsRouter.patch('/:id', async (req: Request, res: Response) => {
         .catch(() => {})
     }
   } catch (err) {
-    res.status(500).json({ error: 'Internal server error' })
+    console.error('PATCH /api/agents/:id failed:', err)
+    const message = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ error: 'Internal server error', detail: message })
   }
 })
 
@@ -235,15 +263,22 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
   const id = req.params.id as string
   const { message } = req.body
 
+  console.log('[BACKEND] POST /api/agents/:id/chat', { id, message })
+
   const agent = await prisma.agent.findUnique({ where: { id } })
-  if (!agent) return res.status(404).json({ error: 'Agent not found' })
+  if (!agent) {
+    console.log('[BACKEND] Agent not found:', id)
+    return res.status(404).json({ error: 'Agent not found' })
+  }
 
   const user = await getDefaultUser()
+  console.log('[BACKEND] Using user:', user.email)
 
   // Save user message
-  await prisma.message.create({
+  const userMsg = await prisma.message.create({
     data: { agentId: id, userId: user.id, role: 'user', content: String(message ?? '') },
   })
+  console.log('[BACKEND] Saved user message:', userMsg.id, userMsg.content.slice(0, 50))
 
   // Fetch history + agent files + user integrations in parallel
   const [history, agentFiles, integrationContext] = await Promise.all([
@@ -261,6 +296,8 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
   const visibleGoals = await getVisibleGoalsForAgent(user.id, id)
   const integrationTokens = integrationContext.tokens
 
+  console.log('[BACKEND] Fetched', history.length, 'history items,', agentFiles.length, 'files')
+
   const business_context = await getBusinessContext()
   const memoryWithBusinessContext = `${business_context}\n\n${agent.memory ?? ''}`.trim()
 
@@ -270,14 +307,20 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
+  console.log('[BACKEND] SSE headers set')
 
   let aborted = false
-  req.on('close', () => { aborted = true })
+  req.on('close', () => {
+    console.log('[BACKEND] Client closed connection')
+    aborted = true
+  })
 
   let fullContent = ''
 
   try {
-    const pythonRes = await fetch(`${getPythonUrl()}/chat`, {
+    const pythonUrl = getPythonUrl()
+    console.log('[BACKEND] Calling Python service:', pythonUrl + '/chat')
+    const pythonRes = await fetch(`${pythonUrl}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -294,40 +337,76 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
       }),
     })
 
+    console.log('[BACKEND] Python response received:', pythonRes.status, pythonRes.statusText)
     const reader = pythonRes.body?.getReader()
     const decoder = new TextDecoder()
 
-    if (!reader) throw new Error('No response body')
+    if (!reader) {
+      console.error('[BACKEND] No response body from Python service')
+      throw new Error('No response body')
+    }
 
+    let chunkCount = 0
     while (true) {
-      if (aborted) { reader.cancel(); break }
-      const { done, value } = await reader.read()
-      if (done) break
+      if (aborted) {
+        console.log('[BACKEND] Stream aborted by client')
+        reader.cancel()
+        break
+      }
+      let readResult
+      try {
+        readResult = await reader.read()
+      } catch (err) {
+        const errorText = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+        if (
+          errorText.includes('terminated') ||
+          errorText.includes('other side closed') ||
+          errorText.includes('UND_ERR_SOCKET')
+        ) {
+          console.log('[BACKEND] Python stream closed cleanly:', errorText)
+          break
+        }
+        throw err
+      }
+
+      const { done, value } = readResult
+      if (done) {
+        console.log('[BACKEND] Python stream ended after', chunkCount, 'chunks')
+        break
+      }
+      chunkCount++
       const chunk = decoder.decode(value, { stream: true })
       for (const line of chunk.split('\n')) {
         if (line.startsWith('data: ')) {
           const payload = line.slice(6).trim()
           if (payload === '[DONE]') {
+            console.log('[BACKEND] Received [DONE] from Python')
             res.write('data: [DONE]\n\n')
           } else {
             try {
               const parsed = JSON.parse(payload)
-              if (parsed.delta) fullContent += parsed.delta
+              if (parsed.delta) {
+                fullContent += parsed.delta
+                console.log('[BACKEND] Added delta, total length now:', fullContent.length)
+              }
               res.write(`data: ${payload}\n\n`)
-            } catch {
-              // skip malformed
+            } catch (err) {
+              console.error('[BACKEND] Failed to parse payload:', payload, err)
             }
           }
         }
       }
     }
   } catch (err) {
+    console.error('[BACKEND] Error during streaming:', err)
     res.write(`data: ${JSON.stringify({ error: 'Agent service error' })}\n\n`)
   } finally {
+    console.log('[BACKEND] Finally block: fullContent length =', fullContent.length)
     if (fullContent) {
-      await prisma.message.create({
+      const assistantMsg = await prisma.message.create({
         data: { agentId: id, userId: user.id, role: 'assistant', content: fullContent },
       })
+      console.log('[BACKEND] Saved assistant message:', assistantMsg.id, assistantMsg.content.slice(0, 50))
 
       // Fire-and-forget memory update
       const recentTurn = `user: ${message}\nassistant: ${fullContent}`
@@ -337,28 +416,32 @@ agentsRouter.post('/:id/chat', async (req: Request, res: Response) => {
             where: { id },
             select: { id: true, name: true, memory: true },
           })
-          if (!latestAgent) return
+          if (!latestAgent) {
+            console.log('[BACKEND] Agent not found for memory update')
+            return
+          }
 
-          const updateResponse = await fetch(`${getPythonUrl()}/update-memory`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agent_id: latestAgent.id,
-              agent_name: latestAgent.name,
-              current_memory: latestAgent.memory ?? '',
-              conversation: recentTurn,
-            }),
+          const updateResult = await postJsonWithTimeout(`${getPythonUrl()}/update-memory`, {
+            agent_id: latestAgent.id,
+            agent_name: latestAgent.name,
+            current_memory: latestAgent.memory ?? '',
+            conversation: recentTurn,
           })
 
-          const { memory: updatedMemory } = await updateResponse.json()
+          const updatedMemory = updateResult?.memory
           if (updatedMemory) {
             await prisma.agent.update({ where: { id: latestAgent.id }, data: { memory: updatedMemory } })
+            console.log('[BACKEND] Agent memory updated')
           }
-        } catch {
-          // best-effort memory update only
+        } catch (err) {
+          // best-effort only; never surface memory update failures
         }
       })()
+      console.log('[BACKEND] Memory update async call initiated')
+    } else {
+      console.log('[BACKEND] No fullContent - skipping message save and memory update')
     }
+    console.log('[BACKEND] Closing SSE connection')
     res.end()
   }
 })

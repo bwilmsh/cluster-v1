@@ -15,6 +15,9 @@ from tool_registry import ToolRegistry
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
 MIN_CAL_API_VERSION = "2026-02-25"
+SUPABASE_MEMORY_TABLE = os.environ.get("SUPABASE_MEMORY_TABLE", "memories")
+SUPABASE_DOCUMENTS_TABLE = os.environ.get("SUPABASE_DOCUMENTS_TABLE", "documents")
+SUPABASE_DOCUMENTS_BUCKET = os.environ.get("SUPABASE_DOCUMENTS_BUCKET", "user_docs")
 
 TOOL_REGISTRY = ToolRegistry()
 
@@ -38,7 +41,7 @@ def _cal_api_version() -> str:
 
     return configured
 
-# ─── Tool schemas (passed to Claude) ─────────────────────────────────────────
+# ─── Tool schemas ─────────────────────────────────────────────────────────────
 
 BROWSE_WEBSITE_TOOL = {
     "name": "browse_website",
@@ -59,7 +62,7 @@ BROWSE_WEBSITE_TOOL = {
     },
 }
 
-# Anthropic native web search — executed server-side, no API key needed
+# Native web search — executed server-side, no API key needed
 WEB_SEARCH_NATIVE_TOOL = {
     "type": "web_search_20250305",
     "name": "web_search",
@@ -97,7 +100,7 @@ READ_DOCUMENT_CONTENT_TOOL = {
     "name": "read_document_content",
     "description": (
         "Use this tool to fetch a PDF document from Supabase Storage by document_id, extract the text, "
-        "and return the first 2000 words to Claude."
+        "and return the first 2000 words to the model."
     ),
     "input_schema": {
         "type": "object",
@@ -382,15 +385,15 @@ GET_CALENDAR_EVENTS_TOOL = {
 ADD_CALENDAR_EVENT_TOOL = {
     "name": "add_calendar_event",
     "description": (
-        "Create a calendar event in Supabase events table. "
-        "Use this when the user asks to add or schedule a calendar event."
+        "Create a calendar item in Supabase events table. "
+        "Use this when the user asks to add or schedule something on the calendar, including tasks."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "title": {
                 "type": "string",
-                "description": "Event title",
+                "description": "Event title. If the user did not provide one, infer it from context or use a short generic title.",
             },
             "start_time": {
                 "type": "string",
@@ -406,7 +409,7 @@ ADD_CALENDAR_EVENT_TOOL = {
                 "description": "Optional event description",
             },
         },
-        "required": ["title", "start_time", "category", "description"],
+        "required": ["start_time", "category", "description"],
     },
 }
 
@@ -707,6 +710,709 @@ UPDATE_WORKFLOW_TOOL = {
 }
 
 
+# ─── Calendar AI tool schemas (calendar page only) ────────────────────────────
+
+CALENDAR_CREATE_EVENT_TOOL = {
+    "name": "create_calendar_event",
+    "description": (
+        "Create a new calendar event. Applied immediately — no confirmation needed. "
+        "The tool result will contain [CALENDAR_REFRESH] on success."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Event title"},
+            "date": {
+                "type": "string",
+                "description": "Event date, e.g. 'today', 'tomorrow', weekday name, or YYYY-MM-DD",
+            },
+            "start_time": {
+                "type": "string",
+                "description": "Start time — ISO 8601 or natural language like 'tomorrow at 9am'",
+            },
+            "end_time": {
+                "type": "string",
+                "description": "End time — ISO 8601 or natural language. Optional; defaults to 1 hour after start.",
+            },
+            "category": {
+                "type": "string",
+                "enum": ["business", "personal", "chore"],
+                "description": "Event category. Default: personal",
+            },
+        },
+        "required": ["title", "start_time"],
+    },
+}
+
+CALENDAR_GET_EVENTS_TOOL = {
+    "name": "get_calendar_events",
+    "description": (
+        "Fetch calendar events for a specific date or range. "
+        "Use to confirm event IDs before move/delete, or to load a day before plan_day."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "start_date": {
+                "type": "string",
+                "description": "Start of range — ISO 'YYYY-MM-DD', 'today', 'tomorrow', or weekday name",
+            },
+            "end_date": {
+                "type": "string",
+                "description": "End of range (inclusive). Defaults to start_date.",
+            },
+        },
+        "required": ["start_date"],
+    },
+}
+
+CALENDAR_MOVE_EVENT_TOOL = {
+    "name": "move_event",
+    "description": (
+        "Move a calendar event to a new start time. "
+        "Call with confirmed=false first — show the user what will change and ask yes/no. "
+        "Call with confirmed=true only after the user confirms."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "ID of the event to move"},
+            "new_start_time": {
+                "type": "string",
+                "description": "New start time — ISO 8601 or natural language",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "Set true only after the user has confirmed. Default false.",
+            },
+        },
+        "required": ["event_id", "new_start_time"],
+    },
+}
+
+CALENDAR_RENAME_EVENT_TOOL = {
+    "name": "rename_event",
+    "description": "Rename a calendar event. Applied immediately — no confirmation needed.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "ID of the event to rename"},
+            "new_title": {"type": "string", "description": "New title for the event"},
+        },
+        "required": ["event_id", "new_title"],
+    },
+}
+
+CALENDAR_EXTEND_EVENT_TOOL = {
+    "name": "extend_event",
+    "description": (
+        "Change the end time of a calendar event (extend or shorten it). "
+        "Call with confirmed=false first — show what will change and ask yes/no. "
+        "Call with confirmed=true only after the user confirms."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "ID of the event"},
+            "new_end_time": {
+                "type": "string",
+                "description": "New end time — ISO 8601 or natural language",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "Set true only after the user has confirmed. Default false.",
+            },
+        },
+        "required": ["event_id", "new_end_time"],
+    },
+}
+
+CALENDAR_DELETE_EVENT_TOOL = {
+    "name": "delete_event",
+    "description": (
+        "Delete a calendar event. "
+        "Call with confirmed=false first — show what will be deleted and ask yes/no. "
+        "Call with confirmed=true only after the user confirms."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "ID of the event to delete"},
+            "confirmed": {
+                "type": "boolean",
+                "description": "Set true only after the user has confirmed. Default false.",
+            },
+        },
+        "required": ["event_id"],
+    },
+}
+
+CALENDAR_PLAN_DAY_TOOL = {
+    "name": "plan_day",
+    "description": (
+        "Fetch all events for a given day with their times and free gaps. "
+        "Use the result to draft a time-blocked schedule, show it to the user, "
+        "then use create_calendar_event for each new block after the user confirms."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "date": {
+                "type": "string",
+                "description": "Date to plan — 'today', 'tomorrow', ISO 'YYYY-MM-DD', or weekday name",
+            },
+        },
+        "required": ["date"],
+    },
+}
+
+CALENDAR_AI_TOOLS: list[dict] = [
+    CALENDAR_CREATE_EVENT_TOOL,
+    CALENDAR_GET_EVENTS_TOOL,
+    CALENDAR_MOVE_EVENT_TOOL,
+    CALENDAR_RENAME_EVENT_TOOL,
+    CALENDAR_EXTEND_EVENT_TOOL,
+    CALENDAR_DELETE_EVENT_TOOL,
+    CALENDAR_PLAN_DAY_TOOL,
+]
+
+
+def get_calendar_ai_tools() -> list[dict]:
+    """Return the calendar-only tool definitions for use in calendar AI mode."""
+    return CALENDAR_AI_TOOLS
+
+
+# ─── Calendar AI executor helpers ─────────────────────────────────────────────
+
+def _fmt_time(dt: datetime) -> str:
+    local = dt.astimezone(_get_agent_timezone())
+    month_day = local.strftime("%B %d").replace(" 0", " ")
+    hour = local.strftime("%I").lstrip("0") or "0"
+    minute = local.strftime("%M")
+    am_pm = local.strftime("%p").lower()
+    return f"{month_day} at {hour}:{minute}{am_pm}"
+
+
+def _resolve_date_midnight(value: str) -> datetime:
+    """Resolve a date description to midnight in the local timezone."""
+    from datetime import timedelta
+    agent_tz = _get_agent_timezone()
+    now_local = datetime.now(agent_tz)
+    text = value.strip().lower()
+
+    if text == "today":
+        d = now_local.date()
+        return datetime(d.year, d.month, d.day, tzinfo=agent_tz)
+    if text == "tomorrow":
+        d = (now_local + timedelta(days=1)).date()
+        return datetime(d.year, d.month, d.day, tzinfo=agent_tz)
+
+    weekday_map = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    if text in weekday_map:
+        target = weekday_map[text]
+        days_ahead = (target - now_local.weekday()) % 7 or 7
+        d = (now_local + timedelta(days=days_ahead)).date()
+        return datetime(d.year, d.month, d.day, tzinfo=agent_tz)
+
+    iso_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if iso_match:
+        return datetime(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)), tzinfo=agent_tz)
+
+    raise ValueError(f"Cannot resolve date: {value!r}")
+
+
+def _fetch_all_appointments() -> list[dict]:
+    r = httpx.get(f"{BACKEND_URL}/api/appointments?limit=500", timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    raw = data.get("data") or data if isinstance(data, list) else []
+    if isinstance(data, dict):
+        raw = data.get("data", [])
+    return raw if isinstance(raw, list) else []
+
+
+def _fetch_all_habits() -> list[dict]:
+    r = httpx.get(f"{BACKEND_URL}/api/habits", timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    if isinstance(data, dict):
+        raw = data.get("data", [])
+    else:
+        raw = data
+    return raw if isinstance(raw, list) else []
+
+
+def _find_calendar_event(event_id: str) -> dict | None:
+    try:
+        events = _fetch_all_appointments()
+    except Exception:
+        return None
+    for ev in events:
+        if str(ev.get("id", "")) == event_id:
+            return ev
+    return None
+
+
+def _calendar_event_title(ev: dict | None) -> str:
+    if not ev:
+        return "event"
+    return str(ev.get("customer_name") or ev.get("title") or ev.get("note") or "event").strip() or "event"
+
+
+def _calendar_event_range(ev: dict | None) -> str:
+    if not ev:
+        return "its current time"
+    start_raw = ev.get("start_time") or ev.get("event_time") or ""
+    end_raw = ev.get("end_time") or ""
+    try:
+        start_label = _fmt_time(_parse_event_time(str(start_raw)))
+    except ValueError:
+        return "its current time"
+    if not end_raw:
+        return start_label
+    try:
+        return f"{start_label} to {_fmt_time(_parse_event_time(str(end_raw)))}"
+    except ValueError:
+        return start_label
+
+
+def _parse_calendar_datetime(date_raw: str, time_raw: str) -> datetime:
+    date_text = date_raw.strip()
+    time_text = time_raw.strip()
+    clock_only = bool(re.fullmatch(r"\d{1,2}(?::\d{2})?\s*(?:am|pm)", time_text.lower())) or bool(
+        re.fullmatch(r"(?:[01]?\d|2[0-3]):[0-5]\d", time_text)
+    )
+    if date_text and clock_only:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+            return _parse_event_time(f"{date_text} {time_text}")
+        return _parse_event_time(f"{date_text} at {time_text}")
+    return _parse_event_time(time_text)
+
+
+# ─── Calendar AI executors ────────────────────────────────────────────────────
+
+def _calendar_create_event(inputs: dict) -> str:
+    from datetime import timedelta
+    title = str(inputs.get("title", "")).strip()
+    date_raw = str(inputs.get("date", "")).strip()
+    start_raw = str(inputs.get("start_time", "")).strip()
+    end_raw = str(inputs.get("end_time", "")).strip()
+    category = str(inputs.get("category", "personal")).strip().lower()
+
+    if not title:
+        return "create_calendar_event failed: title is required."
+    if not start_raw:
+        return "create_calendar_event failed: start_time is required."
+    if category not in {"business", "personal", "chore"}:
+        category = "personal"
+
+    try:
+        parsed_start = _parse_calendar_datetime(date_raw, start_raw)
+    except ValueError:
+        return f"create_calendar_event failed: could not parse start_time '{start_raw}'."
+
+    if end_raw:
+        try:
+            parsed_end = _parse_calendar_datetime(date_raw, end_raw)
+        except ValueError:
+            return f"create_calendar_event failed: could not parse end_time '{end_raw}'."
+    else:
+        parsed_end = parsed_start + timedelta(hours=1)
+
+    iso_start = _to_utc_iso_z(parsed_start)
+    iso_end = _to_utc_iso_z(parsed_end)
+
+    try:
+        r = httpx.post(
+            f"{BACKEND_URL}/api/appointments",
+            json={"title": title, "start_time": iso_start, "end_time": iso_end, "category": category},
+            timeout=15,
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        return f"create_calendar_event failed: {exc}"
+
+    appt = r.json().get("appointment") or {}
+    event_id = appt.get("id", "?")
+    return f"Created '{title}' on {_fmt_time(parsed_start)} (id: {event_id}). [CALENDAR_REFRESH]"
+
+
+def _calendar_get_events(inputs: dict) -> str:
+    start_raw = str(inputs.get("start_date", "")).strip()
+    end_raw = str(inputs.get("end_date", "")).strip()
+
+    if not start_raw:
+        return "get_calendar_events failed: start_date is required."
+
+    try:
+        start_midnight = _resolve_date_midnight(start_raw)
+    except ValueError:
+        return f"get_calendar_events failed: could not parse start_date '{start_raw}'."
+
+    if end_raw:
+        try:
+            end_midnight = _resolve_date_midnight(end_raw)
+        except ValueError:
+            return f"get_calendar_events failed: could not parse end_date '{end_raw}'."
+    else:
+        end_midnight = start_midnight
+
+    from datetime import timedelta
+    end_exclusive = end_midnight + timedelta(days=1)
+
+    try:
+        events = _fetch_all_appointments()
+    except Exception as exc:
+        return f"get_calendar_events failed: {exc}"
+
+    agent_tz = _get_agent_timezone()
+    matching = []
+    for ev in events:
+        raw_start = ev.get("start_time") or ev.get("event_time") or ""
+        if not raw_start:
+            continue
+        try:
+            parsed = _parse_event_time(str(raw_start))
+        except ValueError:
+            continue
+        local = parsed.astimezone(agent_tz)
+        local_midnight = datetime(local.year, local.month, local.day, tzinfo=agent_tz)
+        if start_midnight <= local_midnight < end_exclusive:
+            title = (ev.get("customer_name") or ev.get("title") or ev.get("note") or "Untitled").strip()
+            end_raw_val = ev.get("end_time") or ""
+            end_label = ""
+            if end_raw_val:
+                try:
+                    end_label = f" – {_fmt_time(_parse_event_time(str(end_raw_val)))}"
+                except ValueError:
+                    pass
+            matching.append(f"[id:{ev.get('id')}] {_fmt_time(parsed)}{end_label}: {title}")
+
+    if not matching:
+        return f"No events found between {start_raw} and {end_raw or start_raw}."
+    return "\n".join(matching)
+
+
+def _calendar_move_event(inputs: dict) -> str:
+    from datetime import timedelta
+    event_id = str(inputs.get("event_id", "")).strip()
+    new_start_raw = str(inputs.get("new_start_time", "")).strip()
+    confirmed = bool(inputs.get("confirmed", False))
+
+    if not event_id:
+        return "move_event failed: event_id is required."
+    if not new_start_raw:
+        return "move_event failed: new_start_time is required."
+
+    try:
+        parsed_start = _parse_event_time(new_start_raw)
+    except ValueError:
+        return f"move_event failed: could not parse new_start_time '{new_start_raw}'."
+
+    current_event = _find_calendar_event(event_id)
+    if not confirmed:
+        title = _calendar_event_title(current_event)
+        current_range = _calendar_event_range(current_event)
+        return (
+            f"PENDING CONFIRMATION: Move '{title}' from {current_range} to {_fmt_time(parsed_start)}? "
+            f"Call move_event again with confirmed=true after the user says yes."
+        )
+
+    # Try to preserve duration
+    iso_start = _to_utc_iso_z(parsed_start)
+    payload: dict = {"start_time": iso_start}
+    try:
+        if current_event:
+            s_raw = current_event.get("start_time") or ""
+            e_raw = current_event.get("end_time") or ""
+            if s_raw and e_raw:
+                orig_start = _parse_event_time(str(s_raw))
+                orig_end = _parse_event_time(str(e_raw))
+                duration = orig_end - orig_start
+                payload["end_time"] = _to_utc_iso_z(parsed_start + duration)
+    except Exception:
+        pass
+
+    try:
+        r = httpx.patch(f"{BACKEND_URL}/api/appointments/{event_id}", json=payload, timeout=15)
+        r.raise_for_status()
+    except Exception as exc:
+        return f"move_event failed: {exc}"
+
+    return f"Moved event {event_id} to {_fmt_time(parsed_start)}. [CALENDAR_REFRESH]"
+
+
+def _calendar_rename_event(inputs: dict) -> str:
+    event_id = str(inputs.get("event_id", "")).strip()
+    new_title = str(inputs.get("new_title", "")).strip()
+
+    if not event_id:
+        return "rename_event failed: event_id is required."
+    if not new_title:
+        return "rename_event failed: new_title is required."
+
+    try:
+        r = httpx.patch(
+            f"{BACKEND_URL}/api/appointments/{event_id}",
+            json={"title": new_title},
+            timeout=15,
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        return f"rename_event failed: {exc}"
+
+    return f"Renamed event {event_id} to '{new_title}'. [CALENDAR_REFRESH]"
+
+
+def _calendar_extend_event(inputs: dict) -> str:
+    event_id = str(inputs.get("event_id", "")).strip()
+    new_end_raw = str(inputs.get("new_end_time", "")).strip()
+    confirmed = bool(inputs.get("confirmed", False))
+
+    if not event_id:
+        return "extend_event failed: event_id is required."
+    if not new_end_raw:
+        return "extend_event failed: new_end_time is required."
+
+    try:
+        parsed_end = _parse_event_time(new_end_raw)
+    except ValueError:
+        return f"extend_event failed: could not parse new_end_time '{new_end_raw}'."
+
+    current_event = _find_calendar_event(event_id)
+    if not confirmed:
+        title = _calendar_event_title(current_event)
+        current_range = _calendar_event_range(current_event)
+        return (
+            f"PENDING CONFIRMATION: Change '{title}' from {current_range} to end at {_fmt_time(parsed_end)}? "
+            f"Call extend_event again with confirmed=true after the user says yes."
+        )
+
+    payload = {"end_time": _to_utc_iso_z(parsed_end)}
+    if current_event and current_event.get("start_time"):
+        payload["start_time"] = _to_utc_iso_z(_parse_event_time(str(current_event.get("start_time"))))
+
+    try:
+        r = httpx.patch(
+            f"{BACKEND_URL}/api/appointments/{event_id}",
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        return f"extend_event failed: {exc}"
+
+    return f"Updated end time of event {event_id} to {_fmt_time(parsed_end)}. [CALENDAR_REFRESH]"
+
+
+def _calendar_delete_event(inputs: dict) -> str:
+    event_id = str(inputs.get("event_id", "")).strip()
+    confirmed = bool(inputs.get("confirmed", False))
+
+    if not event_id:
+        return "delete_event failed: event_id is required."
+
+    current_event = _find_calendar_event(event_id)
+    if not confirmed:
+        title = _calendar_event_title(current_event)
+        current_range = _calendar_event_range(current_event)
+        return (
+            f"PENDING CONFIRMATION: Delete '{title}' at {current_range}? "
+            f"Call delete_event again with confirmed=true after the user says yes."
+        )
+
+    try:
+        r = httpx.delete(f"{BACKEND_URL}/api/appointments/{event_id}", timeout=15)
+        r.raise_for_status()
+    except Exception as exc:
+        return f"delete_event failed: {exc}"
+
+    return f"Deleted event {event_id}. [CALENDAR_REFRESH]"
+
+
+def _calendar_plan_day(inputs: dict) -> str:
+    date_raw = str(inputs.get("date", "")).strip()
+    if not date_raw:
+        return "plan_day failed: date is required."
+
+    try:
+        day_start = _resolve_date_midnight(date_raw)
+    except ValueError:
+        return f"plan_day failed: could not parse date '{date_raw}'."
+
+    from datetime import timedelta
+    day_end = day_start + timedelta(days=1)
+    agent_tz = _get_agent_timezone()
+
+    try:
+        events = _fetch_all_appointments()
+    except Exception as exc:
+        return f"plan_day failed: could not fetch events: {exc}"
+
+    try:
+        habits = _fetch_all_habits()
+    except Exception:
+        habits = []
+
+    day_events = []
+    for ev in events:
+        raw_start = ev.get("start_time") or ev.get("event_time") or ""
+        if not raw_start:
+            continue
+        try:
+            parsed = _parse_event_time(str(raw_start))
+        except ValueError:
+            continue
+        local = parsed.astimezone(agent_tz)
+        local_midnight = datetime(local.year, local.month, local.day, tzinfo=agent_tz)
+        if day_start <= local_midnight < day_end:
+            title = (ev.get("customer_name") or ev.get("title") or ev.get("note") or "Untitled").strip()
+            end_raw = ev.get("end_time") or ""
+            end_dt = None
+            if end_raw:
+                try:
+                    end_dt = _parse_event_time(str(end_raw))
+                except ValueError:
+                    pass
+            if not end_dt:
+                end_dt = parsed + timedelta(hours=1)
+            day_events.append({"title": title, "start": parsed, "end": end_dt, "id": ev.get("id")})
+
+    day_events.sort(key=lambda x: x["start"])
+
+    day_label = day_start.strftime("%A %B %d").replace(" 0", " ")
+    lines = [f"Day: {day_label}"]
+    lines.append("")
+
+    if day_events:
+        lines.append("Existing events:")
+        for e in day_events:
+            start_local = e["start"].astimezone(agent_tz)
+            end_local = e["end"].astimezone(agent_tz)
+            s_hour = start_local.strftime("%I").lstrip("0") or "0"
+            s_min = start_local.strftime("%M")
+            s_am = start_local.strftime("%p").lower()
+            e_hour = end_local.strftime("%I").lstrip("0") or "0"
+            e_min = end_local.strftime("%M")
+            e_am = end_local.strftime("%p").lower()
+            lines.append(f"  [id:{e['id']}] {s_hour}:{s_min}{s_am} – {e_hour}:{e_min}{e_am}: {e['title']}")
+    else:
+        lines.append("No events scheduled yet.")
+
+    active_habits = []
+    weekday_name = day_start.strftime("%A").lower()
+    weekday_short = day_start.strftime("%a").lower()
+    weekday_index = str(day_start.weekday())
+    for habit in habits:
+        if habit.get("isActive") is False or habit.get("active") is False:
+            continue
+        days = habit.get("daysOfWeek")
+        if isinstance(days, str):
+            try:
+                parsed_days = json.loads(days)
+                days = parsed_days if isinstance(parsed_days, list) else [days]
+            except Exception:
+                days = [part.strip() for part in days.split(",") if part.strip()]
+        if isinstance(days, list) and days:
+            normalized_days = {str(day).strip().lower() for day in days}
+            if not ({weekday_name, weekday_short, weekday_index} & normalized_days):
+                continue
+        name = str(habit.get("name") or "Habit").strip()
+        try:
+            duration_minutes = int(habit.get("durationMinutes") or habit.get("duration_minutes") or 30)
+        except Exception:
+            duration_minutes = 30
+        duration_minutes = min(max(duration_minutes, 5), 240)
+        window_start = str(habit.get("timeRangeStart") or habit.get("timeOfDay") or "09:00").strip()
+        window_end = str(habit.get("timeRangeEnd") or habit.get("endTime") or "").strip()
+        if not window_end:
+            try:
+                hour = int((window_start or "09:00").split(":", 1)[0])
+            except Exception:
+                hour = 9
+            window_end = "12:00" if hour < 12 else "17:00" if hour < 17 else "22:00"
+        active_habits.append({
+            "name": name,
+            "duration": duration_minutes,
+            "window_start": window_start or "09:00",
+            "window_end": window_end,
+            "priority": habit.get("priority") or 3,
+        })
+
+    if active_habits:
+        lines.append("")
+        lines.append("Habits to place:")
+        for habit in sorted(active_habits, key=lambda h: int(h.get("priority") or 3), reverse=True):
+            lines.append(
+                f"  {habit['name']} ({habit['duration']}m, window {habit['window_start']} - {habit['window_end']})"
+            )
+
+    # Calculate free blocks (9am – 10pm window)
+    work_start = day_start.replace(hour=9)
+    work_end = day_start.replace(hour=22)
+    busy = [(e["start"].astimezone(agent_tz), e["end"].astimezone(agent_tz)) for e in day_events]
+    busy.sort(key=lambda x: x[0])
+
+    free_blocks = []
+    cursor = work_start
+    for b_start, b_end in busy:
+        if b_start > cursor and (b_start - cursor).seconds >= 1800:
+            free_blocks.append((cursor, b_start))
+        if b_end > cursor:
+            cursor = b_end
+    if cursor < work_end and (work_end - cursor).seconds >= 1800:
+        free_blocks.append((cursor, work_end))
+
+    if free_blocks:
+        lines.append("")
+        lines.append("Free time (9am–10pm):")
+        for fb_start, fb_end in free_blocks:
+            s_hour = fb_start.strftime("%I").lstrip("0") or "0"
+            s_min = fb_start.strftime("%M")
+            s_am = fb_start.strftime("%p").lower()
+            e_hour = fb_end.strftime("%I").lstrip("0") or "0"
+            e_min = fb_end.strftime("%M")
+            e_am = fb_end.strftime("%p").lower()
+            dur_min = int((fb_end - fb_start).seconds / 60)
+            dur_label = f"{dur_min // 60}h {dur_min % 60}m" if dur_min % 60 else f"{dur_min // 60}h"
+            lines.append(f"  {s_hour}:{s_min}{s_am} – {e_hour}:{e_min}{e_am} ({dur_label})")
+
+    lines.append("")
+    lines.append("Drafting instructions:")
+    lines.append("- Draft a full time-blocked schedule using the free time above.")
+    lines.append("- Include active habits in suitable gaps when possible.")
+    lines.append("- Show the full draft to the user and ask yes/no before creating any new blocks.")
+    lines.append("- After confirmation, create each accepted block with create_calendar_event.")
+
+    return "\n".join(lines)
+
+
+_CALENDAR_AI_EXECUTORS: dict[str, object] = {
+    "create_calendar_event": _calendar_create_event,
+    "get_calendar_events": _calendar_get_events,
+    "get_calendar_events_range": _calendar_get_events,
+    "move_event": _calendar_move_event,
+    "rename_event": _calendar_rename_event,
+    "extend_event": _calendar_extend_event,
+    "delete_event": _calendar_delete_event,
+    "plan_day": _calendar_plan_day,
+}
+
+
+def execute_calendar_tool(name: str, inputs: dict) -> str:
+    """Execute a calendar AI tool by name and return its string result."""
+    handler = _CALENDAR_AI_EXECUTORS.get(name)
+    if handler is None:
+        return f"Unknown calendar tool: {name}"
+    try:
+        return handler(inputs)  # type: ignore[operator]
+    except Exception as exc:
+        return f"Calendar tool error ({name}): {str(exc)[:300]}"
+
+
 # ─── Tool registry ────────────────────────────────────────────────────────────
 
 def get_available_tools(integrations: dict) -> list:
@@ -924,7 +1630,7 @@ def _search_customer_memories(inputs: dict) -> str:
 
     try:
         r = requests.get(
-            f"{supabase_url}/rest/v1/memories",
+            f"{supabase_url}/rest/v1/{SUPABASE_MEMORY_TABLE}",
             headers={
                 "apikey": supabase_key,
                 "Authorization": f"Bearer {supabase_key}",
@@ -937,6 +1643,10 @@ def _search_customer_memories(inputs: dict) -> str:
         return f"Memory lookup failed: network error contacting Supabase: {exc}"
 
     if not r.ok:
+        if r.status_code == 404 and SUPABASE_MEMORY_TABLE != "memories":
+            return f"Memory lookup failed: Supabase table '{SUPABASE_MEMORY_TABLE}' was not found. Set SUPABASE_MEMORY_TABLE to the correct exposed table name."
+        if r.status_code == 404:
+            return "Memory lookup failed: the Supabase memories table was not found. Check that the table exists and is exposed via PostgREST, or set SUPABASE_MEMORY_TABLE to the correct table name."
         return f"Memory lookup failed: Supabase returned {r.status_code}: {r.text[:200]}"
 
     rows = r.json()
@@ -1073,7 +1783,7 @@ def _read_document_content(inputs: dict) -> str:
 
     try:
         response = (
-            client.table("documents")
+            client.table(SUPABASE_DOCUMENTS_TABLE)
             .select("document_id,id,name,url,storage_path,mime_type")
             .or_(f"document_id.eq.{document_id},id.eq.{document_id}")
             .limit(1)
@@ -1101,19 +1811,35 @@ def _read_document_content(inputs: dict) -> str:
 
     try:
         if storage_path:
-            download_response = client.storage.from_("user_docs").download(storage_path)
-            if hasattr(download_response, "data") and download_response.data:
-                file_bytes = bytes(download_response.data)
-                source_label = f"storage:{storage_path}"
+            bucket_candidates = [SUPABASE_DOCUMENTS_BUCKET]
+            if SUPABASE_DOCUMENTS_BUCKET != "documents":
+                bucket_candidates.append("documents")
+            for bucket_name in bucket_candidates:
+                try:
+                    download_response = client.storage.from_(bucket_name).download(storage_path)
+                    if hasattr(download_response, "data") and download_response.data:
+                        file_bytes = bytes(download_response.data)
+                        source_label = f"storage:{bucket_name}:{storage_path}"
+                        break
+                except Exception:
+                    continue
         elif file_url:
             if "/storage/v1/object/" in file_url:
                 object_path = file_url.split("/storage/v1/object/")[-1]
                 object_path = object_path.split("?")[0].strip("/")
                 if object_path:
-                    download_response = client.storage.from_("user_docs").download(object_path)
-                    if hasattr(download_response, "data") and download_response.data:
-                        file_bytes = bytes(download_response.data)
-                        source_label = f"url:{file_url}"
+                    bucket_candidates = [SUPABASE_DOCUMENTS_BUCKET]
+                    if SUPABASE_DOCUMENTS_BUCKET != "documents":
+                        bucket_candidates.append("documents")
+                    for bucket_name in bucket_candidates:
+                        try:
+                            download_response = client.storage.from_(bucket_name).download(object_path)
+                            if hasattr(download_response, "data") and download_response.data:
+                                file_bytes = bytes(download_response.data)
+                                source_label = f"url:{bucket_name}:{file_url}"
+                                break
+                        except Exception:
+                            continue
     except Exception:
         file_bytes = None
 
@@ -1166,15 +1892,67 @@ def _get_supabase_client() -> Client:
     return create_client(supabase_url, supabase_key)
 
 
+def _get_timezone_from_ip() -> ZoneInfo | None:
+    """Detect timezone from user's IP location (cached for 1 hour)."""
+    cache_key = "_detected_tz_cache"
+
+    if hasattr(_get_timezone_from_ip, cache_key):
+        cached = getattr(_get_timezone_from_ip, cache_key)
+        if cached and isinstance(cached, tuple):
+            cached_tz, cached_time = cached
+            if isinstance(cached_time, float) and (datetime.now().timestamp() - cached_time) < 3600:
+                try:
+                    return ZoneInfo(cached_tz)
+                except Exception:
+                    pass
+
+    try:
+        response = httpx.get("https://ipapi.co/json/", timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            tz_name = data.get("timezone")
+            if tz_name:
+                setattr(_get_timezone_from_ip, cache_key, (tz_name, datetime.now().timestamp()))
+                try:
+                    return ZoneInfo(tz_name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return None
+
+
+def _get_agent_timezone():
+    # Priority 1: Explicit environment configuration
+    tz_name = (os.environ.get("AGENT_TIMEZONE") or os.environ.get("CAL_TIMEZONE") or "").strip()
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            pass
+
+    # Priority 2: Auto-detect from IP geolocation
+    detected_tz = _get_timezone_from_ip()
+    if detected_tz:
+        return detected_tz
+
+    # Priority 3: System timezone
+    system_tz = datetime.now().astimezone().tzinfo
+    if system_tz:
+        return system_tz
+
+    # Fallback: UTC
+    return timezone.utc
+
+
+def _to_utc_iso_z(value: datetime) -> str:
+    utc_value = value.astimezone(timezone.utc).replace(microsecond=0)
+    return utc_value.isoformat().replace("+00:00", "Z")
+
+
 def _parse_event_time(value: object) -> datetime:
-    def _get_agent_timezone():
-        tz_name = (os.environ.get("AGENT_TIMEZONE") or os.environ.get("CAL_TIMEZONE") or "").strip()
-        if tz_name:
-            try:
-                return ZoneInfo(tz_name)
-            except Exception:
-                pass
-        return datetime.now().astimezone().tzinfo or timezone.utc
+    agent_tz = _get_agent_timezone()
 
     def _parse_clock_time(raw: str) -> tuple[int, int] | None:
         text = raw.strip().lower()
@@ -1199,7 +1977,7 @@ def _parse_event_time(value: object) -> datetime:
 
     def _parse_relative_datetime(raw: str) -> datetime | None:
         text = raw.strip().lower()
-        now_local = datetime.now(_get_agent_timezone())
+        now_local = datetime.now(agent_tz)
 
         simple = re.fullmatch(r"(today|tomorrow)\s+at\s+(.+)", text)
         if simple:
@@ -1213,7 +1991,7 @@ def _parse_event_time(value: object) -> datetime:
             if day_word == "tomorrow":
                 from datetime import timedelta
                 base_date = base_date + timedelta(days=1)
-            return datetime(base_date.year, base_date.month, base_date.day, hour, minute)
+            return datetime(base_date.year, base_date.month, base_date.day, hour, minute, tzinfo=agent_tz)
 
         weekday_match = re.fullmatch(
             r"(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+(.+))?",
@@ -1241,7 +2019,7 @@ def _parse_event_time(value: object) -> datetime:
             candidate_date = now_local.date() + timedelta(days=days_ahead)
             candidate = datetime(candidate_date.year, candidate_date.month, candidate_date.day, hour, minute)
 
-            candidate_with_tz = candidate.replace(tzinfo=_get_agent_timezone())
+            candidate_with_tz = candidate.replace(tzinfo=agent_tz)
             if candidate_with_tz <= now_local:
                 candidate_date = candidate_date + timedelta(days=7)
                 candidate = datetime(candidate_date.year, candidate_date.month, candidate_date.day, hour, minute)
@@ -1250,7 +2028,7 @@ def _parse_event_time(value: object) -> datetime:
                 candidate_date = candidate_date + timedelta(days=7)
                 candidate = datetime(candidate_date.year, candidate_date.month, candidate_date.day, hour, minute)
 
-            return candidate
+            return candidate.replace(tzinfo=agent_tz)
 
         return None
 
@@ -1274,7 +2052,7 @@ def _parse_event_time(value: object) -> datetime:
             "december": 12,
         }
 
-        local_now = datetime.now(_get_agent_timezone())
+        local_now = datetime.now(agent_tz)
 
         # ISO local date with optional time, e.g. 2026-04-21 or 2026-04-21 2pm
         iso_local = re.fullmatch(
@@ -1292,7 +2070,7 @@ def _parse_event_time(value: object) -> datetime:
                 return None
             hour, minute = parsed_clock
             try:
-                return datetime(year, month, day, hour, minute)
+                return datetime(year, month, day, hour, minute, tzinfo=agent_tz)
             except ValueError:
                 return None
 
@@ -1315,14 +2093,14 @@ def _parse_event_time(value: object) -> datetime:
                 return None
             hour, minute = parsed_clock
             try:
-                return datetime(year, month, day, hour, minute)
+                return datetime(year, month, day, hour, minute, tzinfo=agent_tz)
             except ValueError:
                 return None
 
         return None
 
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=agent_tz)
     if not isinstance(value, str):
         raise ValueError("Invalid event_time value")
 
@@ -1333,8 +2111,8 @@ def _parse_event_time(value: object) -> datetime:
     try:
         normalized = candidate.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
-        if parsed.tzinfo is not None:
-            return parsed.astimezone(_get_agent_timezone()).replace(tzinfo=None)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=agent_tz)
         return parsed
     except ValueError:
         explicit = _parse_explicit_datetime(candidate)
@@ -1403,7 +2181,7 @@ def add_calendar_event(title: str, start_time: str, category: str, description: 
     clean_description = description.strip()
 
     if not clean_title:
-        return "Could not add calendar event: title is required."
+        clean_title = "Calendar item"
     if not clean_start_time:
         return "Could not add calendar event: start_time is required."
     if clean_category not in {"business", "chore", "personal"}:
@@ -1413,10 +2191,11 @@ def add_calendar_event(title: str, start_time: str, category: str, description: 
         parsed_time = _parse_event_time(clean_start_time)
     except Exception:
         return "Could not add calendar event: start_time must be a valid ISO 8601 date/time."
+    iso_time_with_tz = _to_utc_iso_z(parsed_time)
 
     payload = {
         "title": clean_title,
-        "event_time": parsed_time.isoformat(),
+        "event_time": iso_time_with_tz,
         "category": clean_category,
         "description": clean_description,
     }
@@ -1464,7 +2243,7 @@ def update_calendar_event(
             parsed_time = _parse_event_time(clean_start_time)
         except Exception:
             return "Could not update calendar event: start_time must be a valid ISO 8601 date/time."
-        updates["event_time"] = parsed_time.isoformat()
+        updates["event_time"] = _to_utc_iso_z(parsed_time)
 
     if category is not None:
         clean_category = str(category).strip().lower()
@@ -1636,16 +2415,7 @@ def _normalize_booking_start_time(start_time: str) -> tuple[str | None, str | No
             "like 'tomorrow at 3pm' or 'monday at 09:00'."
         )
 
-    tz_name = (os.environ.get("AGENT_TIMEZONE") or os.environ.get("CAL_TIMEZONE") or "").strip()
-    if tz_name:
-        try:
-            tzinfo = ZoneInfo(tz_name)
-        except Exception:
-            tzinfo = datetime.now().astimezone().tzinfo or timezone.utc
-    else:
-        tzinfo = datetime.now().astimezone().tzinfo or timezone.utc
-
-    parsed_utc = parsed_local.replace(tzinfo=tzinfo).astimezone(timezone.utc)
+    parsed_utc = parsed_local.astimezone(timezone.utc)
     if parsed_utc <= datetime.now(timezone.utc):
         return None, "Unable to book appointment: the requested time has already passed."
 

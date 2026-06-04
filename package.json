@@ -27,6 +27,7 @@
     "@prisma/client": "^6.7.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
+    "agentation": "^3.0.2",
     "concurrently": "^8.2.2"
   }
 }
